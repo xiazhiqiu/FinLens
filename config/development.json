@@ -1,0 +1,51 @@
+{
+  "environment": "development",
+  "security": {
+    "jwt_secret": "dev-jwt-secret-change-in-production",
+    "jwt_expire_minutes": 60,
+    "aes_encryption_key": "dev-aes-key-change-in-production-32b",
+    "api_key_enabled": false,
+    "max_login_attempts": 5,
+    "lockout_duration_minutes": 30
+  },
+  "compliance": {
+    "strict_mode": false,
+    "enable_content_filter": true,
+    "enable_chinese_wall": true,
+    "report_approval_required": false,
+    "audit_retention_days": 2555
+  },
+  "audit": {
+    "enable_console": true,
+    "enable_file": true,
+    "enable_database": false,
+    "log_level": "INFO",
+    "retention_days": 2555,
+    "enable_immutable_store": true
+  },
+  "data_sources": {
+    "tushare": {
+      "enabled": true,
+      "token": "",
+      "priority": 1
+    },
+    "akshare": {
+      "enabled": true,
+      "priority": 2
+    },
+    "mock": {
+      "enabled": true,
+      "priority": 3
+    }
+  },
+  "llm": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "temperature": 0.7,
+    "max_tokens": 4096
+  },
+  "database": {
+    "sqlite_path": "./data/sqlite/agent_state.db",
+    "audit_log_path": "./data/audit_logs"
+  }
+}

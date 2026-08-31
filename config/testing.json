@@ -1,0 +1,51 @@
+{
+  "environment": "testing",
+  "security": {
+    "jwt_secret": "test-jwt-secret-change-in-production",
+    "jwt_expire_minutes": 30,
+    "aes_encryption_key": "test-aes-key-change-in-production-32b",
+    "api_key_enabled": true,
+    "max_login_attempts": 3,
+    "lockout_duration_minutes": 15
+  },
+  "compliance": {
+    "strict_mode": true,
+    "enable_content_filter": true,
+    "enable_chinese_wall": true,
+    "report_approval_required": true,
+    "audit_retention_days": 365
+  },
+  "audit": {
+    "enable_console": true,
+    "enable_file": true,
+    "enable_database": false,
+    "log_level": "DEBUG",
+    "retention_days": 365,
+    "enable_immutable_store": true
+  },
+  "data_sources": {
+    "tushare": {
+      "enabled": true,
+      "token": "",
+      "priority": 1
+    },
+    "akshare": {
+      "enabled": true,
+      "priority": 2
+    },
+    "mock": {
+      "enabled": true,
+      "priority": 3
+    }
+  },
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "temperature": 0.5,
+    "max_tokens": 4096
+  },
+  "database": {
+    "sqlite_path": "./data/sqlite/test_agent_state.db",
+    "audit_log_path": "./data/audit_logs/test"
+  }
+}
