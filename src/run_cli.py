@@ -67,6 +67,7 @@ def main():
   python run_cli.py "分析复星医药的财务表现"
   python run_cli.py --code 600196 "分析这只股票"
   python run_cli.py --code 000001 --type macro "分析银行股"
+  python run_cli.py --user analyst01 "分析这只股票"
         """,
     )
     parser.add_argument("query", nargs="?", default="分析A股市场", help="金融分析查询")
@@ -75,6 +76,7 @@ def main():
     parser.add_argument("--pdf", "-p", default="", help="研报PDF路径")
     parser.add_argument("--stream", "-s", action="store_true", help="流式模式")
     parser.add_argument("--thread", default="cli-debug", help="会话 thread_id")
+    parser.add_argument("--user", "-u", default="cli-user", help="用户ID（企业级审计用）")
 
     args = parser.parse_args()
 
@@ -86,6 +88,7 @@ def main():
     print(f"LLM: {'[READY] 已配置' if api_ready else '[WARN] 未配置 (规则回退模式)'}")
     print(f"Provider: {settings.LLM_PROVIDER}")
     print(f"SQLite: {settings.SQLITE_PATH}")
+    print(f"用户: {args.user}")
 
     query = args.query
     if args.code:
@@ -116,6 +119,7 @@ def main():
             report_type=args.type,
             pdf_path=args.pdf,
             thread_id=args.thread,
+            user_id=args.user,
         ):
             node_index += 1
             for node_name, node_output in chunk.items():
@@ -132,6 +136,7 @@ def main():
             report_type=args.type,
             pdf_path=args.pdf,
             thread_id=args.thread,
+            user_id=args.user,
         )
         print_state_summary(state)
 

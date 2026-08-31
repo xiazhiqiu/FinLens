@@ -6,14 +6,25 @@ FinScope Supervisor 调度 Agent
 2. 通过 LLM 决策下一个应执行的子 Agent
 3. 硬熔断保护（iteration_count >= 15 → 强制 FINISH）
 4. 单 Agent 连续调用检测（防止同 Agent 死循环）
+5. [企业级] 安全检查 + 审计日志
 """
 
 import json
 import logging
+import time
 from typing import Dict, Any
 
 from graphs.state import FinancialAnalysisState
 from utils.llm_client import safe_invoke, is_llm_ready
+
+# 企业级模块（可选导入）
+try:
+    from security.auth import JWTAuth
+    from security.input_guard import InputGuard
+    from audit.audit_logger import AuditLogger, EventType, EventSeverity
+    ENTERPRISE_MODE = True
+except ImportError:
+    ENTERPRISE_MODE = False
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +39,60 @@ AGENT_PRIORITY_ORDER = [
 MAX_ITERATIONS = 15
 MAX_CONSECUTIVE_CALLS = 3
 
+# 企业级组件（全局单例）
+_audit_logger = None
+_input_guard = None
+
+
+def _get_audit_logger():
+    """获取审计日志记录器"""
+    global _audit_logger
+    if _audit_logger is None and ENTERPRISE_MODE:
+        _audit_logger = AuditLogger(enable_console=False, enable_file=True)
+    return _audit_logger
+
+
+def _get_input_guard():
+    """获取输入防护器"""
+    global _input_guard
+    if _input_guard is None and ENTERPRISE_MODE:
+        _input_guard = InputGuard()
+    return _input_guard
+
 
 def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
     """Supervisor 调度节点"""
     iteration = state.get("iteration_count", 0)
     agent_status = dict(state.get("agent_status", {}))
     error_log = list(state.get("error_log", []))
+    user_id = state.get("user_id", "anonymous")
+
+    # [企业级] 审计日志 - 记录调度开始
+    audit_logger = _get_audit_logger()
+    start_time = time.time()
+
+    if audit_logger:
+        audit_logger.log_event(
+            event_type=EventType.ANALYSIS_START,
+            user_id=user_id,
+            description=f"Supervisor 调度开始 (iter={iteration})",
+            details={"iteration": iteration, "agent_status": agent_status},
+        )
 
     # 硬熔断保护
     if iteration >= MAX_ITERATIONS:
         logger.warning("硬熔断触发: iteration=%d >= %d", iteration, MAX_ITERATIONS)
         error_log.append(f"[硬熔断] 迭代次数达到上限 ({MAX_ITERATIONS})，强制终止")
+
+        if audit_logger:
+            audit_logger.log_event(
+                event_type=EventType.SYSTEM_ERROR,
+                user_id=user_id,
+                description="硬熔断触发",
+                details={"iteration": iteration, "max_iterations": MAX_ITERATIONS},
+                severity=EventSeverity.WARNING,
+            )
+
         agent_status["supervisor"] = "done"
         return {
             "next_agent": "FINISH",
@@ -162,6 +216,22 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
         agent_status[next_agent] = "running"
 
     logger.info("Supervisor: iter=%d → %s (reason: %s)", iteration, next_agent, reason[:80])
+
+    # [企业级] 审计日志 - 记录调度决策
+    duration_ms = (time.time() - start_time) * 1000
+    if audit_logger:
+        audit_logger.log_event(
+            event_type=EventType.ANALYSIS_COMPLETE,
+            user_id=user_id,
+            description=f"Supervisor 决策: {next_agent}",
+            details={
+                "iteration": iteration,
+                "next_agent": next_agent,
+                "reason": reason,
+                "completed_agents": completed_agents,
+            },
+            duration_ms=duration_ms,
+        )
 
     return {
         "next_agent": next_agent,

@@ -12,11 +12,17 @@ FinScope 金融分析 StateGraph 编排
 - 硬熔断: iteration_count >= 15 强制终止
 - 状态持久化: SqliteSaver checkpoint
 - 错误隔离: 子 Agent 异常不中断主流程
+
+[企业级] 安全机制:
+- 输入验证: Prompt注入检测
+- 审计日志: 全链路操作记录
+- 合规检查: 内容过滤 + 信息隔离
 """
 
 import os
 import logging
-from typing import Literal
+import time
+from typing import Literal, Dict, Any
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -28,6 +34,15 @@ from agents.report_extractor import report_extractor_node
 from agents.data_retriever import data_retriever_node
 from agents.financial_analyst import financial_analyst_node
 from agents.report_writer import report_writer_node
+
+# 企业级模块（可选导入）
+try:
+    from security.input_guard import InputGuard
+    from compliance.content_filter import ContentFilter
+    from audit.audit_logger import AuditLogger, EventType, EventSeverity
+    ENTERPRISE_MODE = True
+except ImportError:
+    ENTERPRISE_MODE = False
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +56,63 @@ class FinancialAnalysisGraph:
         self.sqlite_path = sqlite_path
         os.makedirs(os.path.dirname(sqlite_path) if os.path.dirname(sqlite_path) else ".", exist_ok=True)
         self._compiled_graph = None
+
+        # [企业级] 初始化企业组件
+        self._input_guard = None
+        self._content_filter = None
+        self._audit_logger = None
+
+        if ENTERPRISE_MODE:
+            self._input_guard = InputGuard()
+            self._content_filter = ContentFilter()
+            self._audit_logger = AuditLogger(enable_console=False, enable_file=True)
+
+    def validate_input(self, user_query: str) -> Dict[str, Any]:
+        """[企业级] 验证用户输入"""
+        if not self._input_guard:
+            return {"valid": True, "sanitized": user_query}
+
+        result = self._input_guard.check_input(user_query)
+
+        if not result["is_safe"]:
+            logger.warning("输入安全检查失败: %s", result["threats"])
+            if self._audit_logger:
+                self._audit_logger.log_event(
+                    event_type=EventType.AUTH_FAILURE,
+                    user_id="system",
+                    description="输入安全检查失败",
+                    details={"threats": result["threats"]},
+                    severity=EventSeverity.WARNING,
+                )
+
+        return {
+            "valid": result["is_safe"],
+            "sanitized": result["sanitized_input"],
+            "threats": result["threats"],
+        }
+
+    def filter_output(self, content: str) -> Dict[str, Any]:
+        """[企业级] 过滤输出内容"""
+        if not self._content_filter:
+            return {"valid": True, "filtered": content}
+
+        result = self._content_filter.filter_content(content)
+
+        if not result.passed:
+            logger.warning("内容过滤发现违规: %s", result.violations)
+            if self._audit_logger:
+                self._audit_logger.log_compliance_event(
+                    user_id="system",
+                    check_type="output_filter",
+                    result="violation",
+                    violations=result.violations,
+                )
+
+        return {
+            "valid": result.passed,
+            "filtered": result.filtered_content,
+            "violations": result.violations,
+        }
 
     @staticmethod
     def _route_from_supervisor(
@@ -124,11 +196,58 @@ class FinancialAnalysisGraph:
         report_type: str = "company",
         pdf_path: str = "",
         thread_id: str = "default",
+        user_id: str = "anonymous",
     ) -> FinancialAnalysisState:
-        """同步执行金融分析"""
+        """[企业级] 同步执行金融分析"""
+        # [企业级] 输入验证
+        validation = self.validate_input(user_query)
+        if not validation["valid"]:
+            logger.warning("输入验证失败，使用清理后的输入")
+
+        # [企业级] 审计日志
+        start_time = time.time()
+        if self._audit_logger:
+            self._audit_logger.log_event(
+                event_type=EventType.ANALYSIS_START,
+                user_id=user_id,
+                description=f"开始分析: {user_query[:50]}...",
+                details={"report_type": report_type, "pdf_path": pdf_path},
+            )
+
         compiled = self.compile()
-        initial_state = create_initial_state(user_query, report_type, pdf_path)
+        initial_state = create_initial_state(
+            validation["sanitized"],
+            report_type,
+            pdf_path,
+        )
+        # 添加用户ID到状态
+        initial_state["user_id"] = user_id
+
         result = compiled.invoke(initial_state, {"configurable": {"thread_id": thread_id}})
+
+        # [企业级] 输出过滤
+        final_report = result.get("final_report", "")
+        if final_report:
+            filter_result = self.filter_output(final_report)
+            if not filter_result["valid"]:
+                result["final_report"] = filter_result["filtered"]
+                result["compliance_warnings"] = filter_result["violations"]
+
+        # [企业级] 审计日志
+        duration_ms = (time.time() - start_time) * 1000
+        if self._audit_logger:
+            self._audit_logger.log_event(
+                event_type=EventType.ANALYSIS_COMPLETE,
+                user_id=user_id,
+                description=f"分析完成: {user_query[:50]}...",
+                details={
+                    "report_type": report_type,
+                    "duration_ms": duration_ms,
+                    "iterations": result.get("iteration_count", 0),
+                },
+                duration_ms=duration_ms,
+            )
+
         return result
 
     def stream(
@@ -137,10 +256,31 @@ class FinancialAnalysisGraph:
         report_type: str = "company",
         pdf_path: str = "",
         thread_id: str = "default",
+        user_id: str = "anonymous",
     ):
-        """流式执行金融分析（yield 每个节点的状态更新）"""
+        """[企业级] 流式执行金融分析"""
+        # [企业级] 输入验证
+        validation = self.validate_input(user_query)
+        if not validation["valid"]:
+            logger.warning("输入验证失败，使用清理后的输入")
+
+        # [企业级] 审计日志
+        if self._audit_logger:
+            self._audit_logger.log_event(
+                event_type=EventType.ANALYSIS_START,
+                user_id=user_id,
+                description=f"开始流式分析: {user_query[:50]}...",
+                details={"report_type": report_type, "pdf_path": pdf_path},
+            )
+
         compiled = self.compile()
-        initial_state = create_initial_state(user_query, report_type, pdf_path)
+        initial_state = create_initial_state(
+            validation["sanitized"],
+            report_type,
+            pdf_path,
+        )
+        initial_state["user_id"] = user_id
+
         for chunk in compiled.stream(
             initial_state,
             {"configurable": {"thread_id": thread_id}},
