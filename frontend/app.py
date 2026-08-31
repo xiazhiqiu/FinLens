@@ -5,6 +5,11 @@ FinScope Streamlit 前端应用
 - 侧边栏: PDF上传、股票代码输入、AgentStepVisualizer
 - 主界面: 对话输入 + graph.stream() 流式执行 + Markdown 报告渲染
 
+[企业级] 新增功能:
+- 用户登录认证
+- 角色权限控制
+- 操作审计日志
+
 启动方式:
     streamlit run frontend/app.py
 """
@@ -26,6 +31,15 @@ from graphs.state import create_initial_state
 from components.step_progress import AgentStepVisualizer
 from utils.config import get_settings
 from utils.llm_client import is_llm_ready
+
+# 企业级模块（可选导入）
+try:
+    from security.auth import JWTAuth, TokenManager
+    from security.rbac import RBACManager, Role, Permission
+    from audit.audit_logger import AuditLogger, EventType
+    ENTERPRISE_MODE = True
+except ImportError:
+    ENTERPRISE_MODE = False
 
 # 页面配置
 st.set_page_config(
@@ -88,15 +102,131 @@ def init_session_state():
         st.session_state.execution_steps = []
         st.session_state.is_running = False
 
+        # [企业级] 认证状态
+        st.session_state.user_id = None
+        st.session_state.user_role = None
+        st.session_state.token = None
+        st.session_state.is_authenticated = False
+
         settings = get_settings()
         st.session_state.graph = FinancialAnalysisGraph(sqlite_path=settings.SQLITE_PATH)
         st.session_state.graph.compile()
 
+        # [企业级] 初始化安全组件
+        if ENTERPRISE_MODE:
+            st.session_state.auth = JWTAuth()
+            st.session_state.rbac = RBACManager()
+            st.session_state.audit_logger = AuditLogger(enable_console=False, enable_file=True)
+        else:
+            st.session_state.auth = None
+            st.session_state.rbac = None
+            st.session_state.audit_logger = None
+
+
+def login_page():
+    """[企业级] 登录页面"""
+    st.markdown("""
+    <div class="main-header">
+        <h1>FinScope</h1>
+        <p class="subtitle">基于 LangGraph 多智能体协同的金融研报智能分析系统</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### 用户登录")
+
+    with st.form("login_form"):
+        username = st.text_input("用户名", placeholder="请输入用户名")
+        password = st.text_input("密码", type="password", placeholder="请输入密码")
+        submitted = st.form_submit_button("登录", type="primary")
+
+        if submitted:
+            if not username or not password:
+                st.error("请输入用户名和密码")
+                return
+
+            # 尝试认证
+            auth = st.session_state.auth
+            if auth:
+                token = auth.authenticate(username, password)
+                if token:
+                    st.session_state.token = token
+                    st.session_state.user_id = username
+                    st.session_state.is_authenticated = True
+
+                    # 获取用户角色
+                    payload = auth.verify(token)
+                    if payload:
+                        st.session_state.user_role = payload.get("role")
+
+                    # 审计日志
+                    if st.session_state.audit_logger:
+                        st.session_state.audit_logger.log_event(
+                            event_type=EventType.USER_LOGIN,
+                            user_id=username,
+                            description=f"用户登录成功: {username}",
+                        )
+
+                    st.success(f"欢迎, {username}!")
+                    st.rerun()
+                else:
+                    st.error("用户名或密码错误")
+
+                    # 审计日志
+                    if st.session_state.audit_logger:
+                        st.session_state.audit_logger.log_event(
+                            event_type=EventType.AUTH_FAILURE,
+                            user_id=username,
+                            description=f"登录失败: {username}",
+                        )
+            else:
+                # 企业模块未启用，直接登录
+                st.session_state.user_id = username
+                st.session_state.user_role = "analyst"
+                st.session_state.is_authenticated = True
+                st.success(f"欢迎, {username}!")
+                st.rerun()
+
+
+def logout():
+    """[企业级] 登出"""
+    if st.session_state.audit_logger and st.session_state.user_id:
+        st.session_state.audit_logger.log_event(
+            event_type=EventType.USER_LOGOUT,
+            user_id=st.session_state.user_id,
+            description=f"用户登出: {st.session_state.user_id}",
+        )
+
+    st.session_state.user_id = None
+    st.session_state.user_role = None
+    st.session_state.token = None
+    st.session_state.is_authenticated = False
+    st.session_state.thread_id = str(uuid.uuid4())
+    st.session_state.messages = []
+    st.rerun()
+
+
+def check_permission(permission: str) -> bool:
+    """[企业级] 检查用户权限"""
+    if not ENTERPRISE_MODE or not st.session_state.rbac:
+        return True  # 企业模块未启用，默认允许
+
+    user_id = st.session_state.user_id
+    if not user_id:
+        return False
+
+    perm = Permission(permission)
+    return st.session_state.rbac.check_permission(user_id, perm)
+
 
 init_session_state()
 
-# 页面头部
-st.markdown("""
+# [企业级] 认证检查
+if not st.session_state.is_authenticated:
+    login_page()
+    st.stop()
+
+# 页面头部（已登录）
+st.markdown(f"""
 <div class="main-header">
     <h1>FinScope</h1>
     <p class="subtitle">基于 LangGraph 多智能体协同的金融研报智能分析系统</p>
@@ -105,6 +235,10 @@ st.markdown("""
         <span class="badge badge-gold">Supervisor</span>
         <span class="badge badge-green">MinerU</span>
         <span class="badge badge-blue">Tushare/AkShare</span>
+        <span class="badge badge-gold">Enterprise</span>
+    </div>
+    <div style="margin-top:0.5rem;font-size:0.8rem;color:#94A3B8;">
+        用户: {st.session_state.user_id} | 角色: {st.session_state.user_role}
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -120,8 +254,16 @@ if not is_llm_ready():
 
 # 侧边栏
 with st.sidebar:
-    st.markdown('<div style="text-align:center;margin-bottom:1rem;"><span style="font-size:1.3rem;font-weight:700;color:#F1F5F9;">FinScope</span><br><span style="font-size:0.7rem;color:#94A3B8;">v0.1.0 | Multi-Agent Financial Analysis</span></div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;margin-bottom:1rem;"><span style="font-size:1.3rem;font-weight:700;color:#F1F5F9;">FinScope</span><br><span style="font-size:0.7rem;color:#94A3B8;">v0.2.0 | Enterprise Multi-Agent</span></div>', unsafe_allow_html=True)
     st.divider()
+
+    # [企业级] 用户信息
+    if st.session_state.is_authenticated:
+        st.markdown(f"**用户**: {st.session_state.user_id}")
+        st.markdown(f"**角色**: {st.session_state.user_role}")
+        if st.button("登出", use_container_width=True):
+            logout()
+        st.divider()
 
     st.markdown("### 分析配置")
     analysis_type = st.selectbox(
@@ -216,6 +358,7 @@ def run_analysis(user_query: str):
             report_type=analysis_type,
             pdf_path=pdf_path,
             thread_id=st.session_state.thread_id,
+            user_id=st.session_state.user_id or "anonymous",
         ):
             node_count += 1
 
