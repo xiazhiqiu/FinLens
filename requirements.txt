@@ -1,0 +1,31 @@
+# FinScope 依赖清单
+# 安装: pip install -r requirements.txt
+
+# ---- 金融数据 ----
+tushare>=1.4.0
+akshare>=1.16.0
+
+# ---- PDF 解析 (MinerU) ----
+pymupdf>=1.25.0
+beautifulsoup4>=4.12.0
+
+# ---- LangChain & LangGraph ----
+langchain>=1.0.5
+langchain-core>=1.0.0
+langchain-community>=0.4.1
+langchain-openai>=1.0.2
+langchain-ollama>=1.0.0
+langgraph>=1.0.0
+langgraph-checkpoint-sqlite>=2.0.1
+
+# ---- Web 框架 ----
+streamlit>=1.52.0
+
+# ---- 配置 ----
+pydantic>=2.10.1
+pydantic-settings>=2.12.0
+python-dotenv>=1.0.1
+
+# ---- 数据处理 ----
+numpy>=1.24
+pandas>=2.2.3
