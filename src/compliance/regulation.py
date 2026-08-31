@@ -284,14 +284,13 @@ class RegulationEngine:
         has_source = any(re.search(p, content) for p in source_patterns)
 
         # 如果包含数据但未标注来源
-        import re as re2
         data_patterns = [
             r"\d+\.?\d*%",  # 百分比
             r"\d+\.?\d*亿",  # 金额
             r"增长|下降|同比|环比",  # 变化
         ]
 
-        has_data = any(re2.search(p, content) for p in data_patterns)
+        has_data = any(re.search(p, content) for p in data_patterns)
 
         if has_data and not has_source:
             return {

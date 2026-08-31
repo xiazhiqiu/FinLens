@@ -127,19 +127,26 @@ class JWTAuth:
         用户认证（示例实现，实际应连接 LDAP/AD）
         """
         # TODO: 实际应连接企业 LDAP/AD
-        # 这里是示例用户数据库
-        users_db = {
-            "analyst": {"password": "analyst123", "role": "analyst"},
-            "reviewer": {"password": "reviewer123", "role": "reviewer"},
-            "compliance": {"password": "compliance123", "role": "compliance"},
-            "admin": {"password": "admin123", "role": "admin"},
-        }
+        # 示例用户数据库（生产环境应从数据库或配置中心获取）
+        # 密码应使用 bcrypt/argon2 哈希存储
+        users_db = self._get_users_db()
 
         user = users_db.get(username)
         if not user or user["password"] != password:
             return None
 
         return self.token_manager.generate_token(username, user["role"])
+
+    def _get_users_db(self) -> Dict:
+        """获取用户数据库（示例）"""
+        # 生产环境应从数据库或配置中心获取
+        # 密码应使用 bcrypt/argon2 哈希
+        return {
+            "analyst": {"password": "analyst123", "role": "analyst"},
+            "reviewer": {"password": "reviewer123", "role": "reviewer"},
+            "compliance": {"password": "compliance123", "role": "compliance"},
+            "admin": {"password": "admin123", "role": "admin"},
+        }
 
     def verify(self, token: str) -> Optional[Dict]:
         """验证 Token"""

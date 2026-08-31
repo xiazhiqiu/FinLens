@@ -112,8 +112,18 @@ class AuditableMixin:
         """记录审计日志"""
         if self.audit_logger:
             from audit.audit_logger import EventType, AuditLogger
+            # 映射事件类型
+            event_type_map = {
+                "login": EventType.USER_LOGIN,
+                "logout": EventType.USER_LOGOUT,
+                "read": EventType.DATA_READ,
+                "write": EventType.DATA_WRITE,
+                "analysis": EventType.ANALYSIS_START,
+                "compliance": EventType.COMPLIANCE_CHECK,
+            }
+            mapped_type = event_type_map.get(event_type, EventType.DATA_READ)
             self.audit_logger.log_event(
-                event_type=EventType.DATA_READ,
+                event_type=mapped_type,
                 user_id=user_id,
                 description=description,
                 details=details or {},
