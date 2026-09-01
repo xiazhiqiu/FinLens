@@ -1,9 +1,9 @@
 {
   "environment": "testing",
   "security": {
-    "jwt_secret": "test-jwt-secret-change-in-production",
+    "jwt_secret": "${JWT_SECRET}",
     "jwt_expire_minutes": 30,
-    "aes_encryption_key": "test-aes-key-change-in-production-32b",
+    "aes_encryption_key": "${AES_ENCRYPTION_KEY}",
     "api_key_enabled": true,
     "max_login_attempts": 3,
     "lockout_duration_minutes": 15

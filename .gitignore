@@ -21,6 +21,11 @@ ENV/
 
 # 环境变量
 .env
+.env.*
+!.env.example
+
+# 内部工具
+.workbuddy/
 
 # 数据目录
 data/sqlite/*.db

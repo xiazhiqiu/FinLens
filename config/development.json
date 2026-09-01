@@ -1,9 +1,9 @@
 {
   "environment": "development",
   "security": {
-    "jwt_secret": "dev-jwt-secret-change-in-production",
+    "jwt_secret": "${JWT_SECRET}",
     "jwt_expire_minutes": 60,
-    "aes_encryption_key": "dev-aes-key-change-in-production-32b",
+    "aes_encryption_key": "${AES_ENCRYPTION_KEY}",
     "api_key_enabled": false,
     "max_login_attempts": 5,
     "lockout_duration_minutes": 30
