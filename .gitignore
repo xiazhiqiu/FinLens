@@ -27,6 +27,9 @@ ENV/
 # 内部工具
 .workbuddy/
 
+# 个人简历
+resume-deliverables/
+
 # 数据目录
 data/sqlite/*.db
 data/uploaded/*.pdf
