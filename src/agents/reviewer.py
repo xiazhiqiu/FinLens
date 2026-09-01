@@ -2,7 +2,7 @@
 FinScope Reviewer Agent
 
 负责:
-1. 审查 financial_analyst 的分析结果
+1. 审查 report_writer 的最终报告
 2. 检查数据-结论一致性、过度断言、维度完整性
 3. 输出 pass/revise 判定 + 修改建议
 4. [企业级] 审计日志记录审查结果
@@ -64,11 +64,12 @@ def _build_review_input(state: FinancialAnalysisState) -> str:
     else:
         parts.append("## 公开市场数据\n（无）")
 
-    analysis = state.get("analysis_result", "")
-    if analysis:
-        parts.append(f"## 待审查分析结果\n{analysis}")
+    # 审查最终报告（而非分析结果）
+    final_report = state.get("final_report", "")
+    if final_report:
+        parts.append(f"## 待审查最终报告\n{final_report[:5000]}")
     else:
-        parts.append("## 待审查分析结果\n（空）")
+        parts.append("## 待审查最终报告\n（空）")
 
     # 如果有历史审查反馈（修订场景）
     review_feedback = state.get("review_feedback", "")
@@ -79,7 +80,7 @@ def _build_review_input(state: FinancialAnalysisState) -> str:
 
 
 def reviewer_node(state: FinancialAnalysisState) -> Dict[str, Any]:
-    """复核审查节点"""
+    """复核审查节点（审查最终报告）"""
     agent_status = dict(state.get("agent_status", {}))
     error_log = list(state.get("error_log", []))
     review_revision_count = state.get("review_revision_count", 0)
@@ -94,26 +95,26 @@ def reviewer_node(state: FinancialAnalysisState) -> Dict[str, Any]:
             "agent_status": agent_status,
         }
 
-    analysis = state.get("analysis_result", "")
-    if not analysis or "分析不可用" in analysis or "分析失败" in analysis:
-        logger.warning("分析结果为空或失败，跳过审查")
+    final_report = state.get("final_report", "")
+    if not final_report or "分析不可用" in final_report or "分析失败" in final_report:
+        logger.warning("最终报告为空或失败，跳过审查")
         agent_status["reviewer"] = "done"
         return {
             "review_result": "pass",
-            "review_feedback": "分析结果为空，跳过审查",
+            "review_feedback": "最终报告为空，跳过审查",
             "agent_status": agent_status,
         }
 
     review_input = _build_review_input(state)
 
-    system_prompt = f"""你是 FinScope 的复核审查员（Reviewer），负责审查金融分析报告的质量。
+    system_prompt = f"""你是 FinScope 的复核审查员（Reviewer），负责审查最终投资分析报告的质量。
 
 ## 你的职责
-审查 analyst 的分析结果，确保：
+审查报告的质量，确保：
 1. **数据-结论一致性**: 每个结论引用的数字必须在提供的数据中存在
 2. **无过度断言**: 不出现"必然"、"100%"、"保证"等绝对化表述
-3. **维度完整性**: 5个分析维度（基本面/财务/行业/风险/建议）是否都有覆盖
-4. **数据依赖声明**: 数据缺失时是否标注"数据不足，暂不评价"
+3. **维度完整性**: 报告是否覆盖了核心内容（公司概况/财务/行业/风险/建议）
+4. **数据依赖声明**: 数据缺失时是否标注"数据不足"
 
 ## 输出格式（严格 JSON）
 {{

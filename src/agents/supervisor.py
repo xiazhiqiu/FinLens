@@ -126,7 +126,8 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
         f"已抽取实体数: {len(state.get('extracted_entities', []))}",
         f"已获取财务数据: {'有' if state.get('financial_data') else '无'}",
         f"分析结果: {'已完成' if state.get('analysis_result') else '未完成'}",
-        f"最终报告: {'已完成' if state.get('final_report') else '未完成'}",
+        f"报告: {'已完成' if state.get('final_report') else '未完成'}",
+        f"审查结果: {state.get('review_result', '无')}",
     ])
 
     # LLM 决策
@@ -141,15 +142,16 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
 | report_extractor | 从PDF研报中抽取关键金融实体 | 有研报需解析且尚未抽取 |
 | data_retriever | 检索A股/宏观金融数据 | 需要股票信息或财务指标 |
 | financial_analyst | 深度金融分析 | 已有足够数据待分析 |
-| reviewer | 审查分析结果质量（数据一致性/过度断言/维度完整） | 分析完成后、撰写报告前 |
-| report_writer | 撰写结构化分析报告 | 审查通过后输出报告 |
+| report_writer | 撰写结构化分析报告 | 分析已完成待输出报告 |
+| reviewer | 审查最终报告质量（数据一致性/过度断言/维度完整） | 报告完成后审查 |
 
 ## 决策原则
-1. 按逻辑顺序: 先抽取 → 再检索 → 再分析 → 审查 → 最后撰写
+1. 按逻辑顺序: 先抽取 → 再检索 → 再分析 → 再撰写 → 最后审查
 2. 如果某一阶段已完成，直接跳到下一阶段
-3. 分析完成后必须先审查再撰写（reviewer pass 后才到 report_writer）
-4. 如果审查返回 revise，指派 financial_analyst 修订
-5. 如果所有阶段已完成，立即 FINISH
+3. 报告完成后必须审查（reviewer）
+4. 审查返回 pass → FINISH
+5. 审查返回 revise → 回到 financial_analyst 修订，然后重新撰写
+6. 如果所有阶段已完成，立即 FINISH
 
 ## 当前进度
 {context}
