@@ -15,6 +15,7 @@ import json
 import hashlib
 
 from common.enterprise_base import EnterpriseBase
+from audit.immutable_store import ImmutableStore
 
 
 class EventType(Enum):
@@ -107,18 +108,20 @@ class AuditEvent:
 class AuditLogger:
     """审计日志记录器"""
 
-    def __init__(self, enable_console: bool = True, enable_file: bool = True):
+    def __init__(self, enable_console: bool = True, enable_file: bool = True, storage_path: str = None):
         """
         初始化审计日志记录器
 
         Args:
             enable_console: 是否启用控制台输出
-            enable_file: 是否启用文件存储
+            enable_file: 是否启用文件存储（ImmutableStore 哈希链）
+            storage_path: 审计日志存储路径
         """
         self.enable_console = enable_console
         self.enable_file = enable_file
         self.events: List[AuditEvent] = []
         self.event_counter = 0
+        self.store = ImmutableStore(storage_path) if enable_file else None
 
     def _generate_event_id(self) -> str:
         """生成事件ID"""
@@ -201,9 +204,9 @@ class AuditLogger:
         print(f"{color}[AUDIT] {event.timestamp.isoformat()} | {event.event_type.value} | {event.user_id} | {event.description}{reset_color}")
 
     def _log_to_file(self, event: AuditEvent):
-        """输出到文件"""
-        # 实际应使用 ImmutableStore
-        pass
+        """输出到文件（ImmutableStore 哈希链防篡改）"""
+        if self.store:
+            self.store.append(event.to_dict())
 
     def log_user_action(
         self,

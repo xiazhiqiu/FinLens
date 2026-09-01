@@ -39,6 +39,7 @@ from agents.report_writer import report_writer_node
 try:
     from security.input_guard import InputGuard
     from compliance.content_filter import ContentFilter
+    from compliance.regulation import RegulationEngine
     from audit.audit_logger import AuditLogger, EventType, EventSeverity
     ENTERPRISE_MODE = True
 except ImportError:
@@ -60,12 +61,19 @@ class FinancialAnalysisGraph:
         # [企业级] 初始化企业组件
         self._input_guard = None
         self._content_filter = None
+        self._regulation_engine = None
         self._audit_logger = None
 
         if ENTERPRISE_MODE:
             self._input_guard = InputGuard()
             self._content_filter = ContentFilter()
-            self._audit_logger = AuditLogger(enable_console=False, enable_file=True)
+            self._regulation_engine = RegulationEngine()
+            audit_storage_path = os.path.join(os.path.dirname(sqlite_path), "audit_logs")
+            self._audit_logger = AuditLogger(
+                enable_console=False,
+                enable_file=True,
+                storage_path=audit_storage_path,
+            )
 
     def validate_input(self, user_query: str) -> Dict[str, Any]:
         """[企业级] 验证用户输入"""
@@ -92,10 +100,33 @@ class FinancialAnalysisGraph:
         }
 
     def filter_output(self, content: str) -> Dict[str, Any]:
-        """[企业级] 过滤输出内容"""
+        """[企业级] 过滤输出内容（RegulationEngine 规则拦截 + ContentFilter 脱敏）"""
         if not self._content_filter:
             return {"valid": True, "filtered": content}
 
+        # 第一层：RegulationEngine 确定性规则检查（违规即拦截）
+        if self._regulation_engine:
+            reg_result = self._regulation_engine.check_compliance(content)
+            if not reg_result.passed:
+                logger.warning("监管规则违规: %s", reg_result.violations)
+                if self._audit_logger:
+                    self._audit_logger.log_compliance_event(
+                        user_id="system",
+                        check_type="regulation_check",
+                        result="violation",
+                        violations=reg_result.violations,
+                    )
+                return {
+                    "valid": False,
+                    "filtered": content,
+                    "violations": reg_result.violations,
+                    "compliance_warnings": [
+                        {"rule_id": v["rule_id"], "message": v["message"]}
+                        for v in reg_result.violations
+                    ],
+                }
+
+        # 第二层：ContentFilter 内容脱敏（替换违规内容）
         result = self._content_filter.filter_content(content)
 
         if not result.passed:
@@ -103,7 +134,7 @@ class FinancialAnalysisGraph:
             if self._audit_logger:
                 self._audit_logger.log_compliance_event(
                     user_id="system",
-                    check_type="output_filter",
+                    check_type="content_filter",
                     result="violation",
                     violations=result.violations,
                 )

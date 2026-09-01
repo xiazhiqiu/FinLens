@@ -5,6 +5,7 @@ FinScope ReportExtractor Agent
 1. 检测 state 中是否有待解析的 PDF 路径
 2. 调用 extract_report_key_info 工具抽取结构化金融实体
 3. 清洗工具返回结果，存入 extracted_entities
+4. [企业级] 记录数据血缘节点
 """
 
 import os
@@ -15,7 +16,25 @@ from typing import Dict, Any, List
 from graphs.state import FinancialAnalysisState
 from tools.financial_tools import extract_report_key_info
 
+# 企业级模块（可选导入）
+try:
+    from audit.data_lineage import DataLineage, DataSourceType
+    ENTERPRISE_MODE = True
+except ImportError:
+    ENTERPRISE_MODE = False
+
 logger = logging.getLogger(__name__)
+
+# 数据血缘全局单例
+_data_lineage = None
+
+
+def _get_data_lineage() -> "DataLineage":
+    """获取数据血缘单例"""
+    global _data_lineage
+    if _data_lineage is None and ENTERPRISE_MODE:
+        _data_lineage = DataLineage()
+    return _data_lineage
 
 
 def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
@@ -93,8 +112,20 @@ def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
 
     agent_status["report_extractor"] = "done"
 
+    # [企业级] 记录数据血缘节点
+    lineage_node_id = ""
+    lineage = _get_data_lineage()
+    if lineage:
+        node = lineage.create_source_node(
+            name=f"PDF研报抽取: {os.path.basename(pdf_path)}",
+            source_type=DataSourceType.PDF_EXTRACTION,
+            metadata={"pdf_path": pdf_path, "entity_count": len(new_entities)},
+        )
+        lineage_node_id = node.node_id
+
     return {
         "extracted_entities": existing_entities + new_entities,
         "agent_status": agent_status,
         "error_log": error_log,
+        "lineage_node_id": lineage_node_id,
     }

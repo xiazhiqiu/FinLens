@@ -5,6 +5,7 @@ FinScope ReportWriter Agent
 1. 整合全链路信息（实体 + 数据 + 分析结论）
 2. 生成符合券商研报规范的专业 Markdown 报告
 3. 固定六大章节结构，保证输出一致性
+4. [企业级] 注入数据血缘信息
 """
 
 import json
@@ -15,7 +16,25 @@ from typing import Dict, Any
 from graphs.state import FinancialAnalysisState
 from utils.llm_client import safe_invoke, is_llm_ready
 
+# 企业级模块（可选导入）
+try:
+    from audit.data_lineage import DataLineage, DataSourceType
+    ENTERPRISE_MODE = True
+except ImportError:
+    ENTERPRISE_MODE = False
+
 logger = logging.getLogger(__name__)
+
+# 数据血缘全局单例
+_data_lineage = None
+
+
+def _get_data_lineage() -> "DataLineage":
+    """获取数据血缘单例"""
+    global _data_lineage
+    if _data_lineage is None and ENTERPRISE_MODE:
+        _data_lineage = DataLineage()
+    return _data_lineage
 
 
 def _collect_full_context(state: FinancialAnalysisState) -> str:
@@ -53,6 +72,17 @@ def _collect_full_context(state: FinancialAnalysisState) -> str:
         parts.append(f"## 深度分析结论\n{truncated}")
     else:
         parts.append("## 深度分析结论\n（未完成分析）")
+
+    # [企业级] 数据血缘信息
+    lineage_node_id = state.get("lineage_node_id", "")
+    lineage = _get_data_lineage()
+    if lineage and lineage_node_id:
+        upstream = lineage.trace_upstream(lineage_node_id)
+        if upstream.get("sources"):
+            parts.append("## 数据血缘（来源追踪）")
+            for src in upstream["sources"]:
+                parts.append(f"- {src['name']} (类型: {src['source_type']})")
+            parts.append("\n> 注：以上数据来源已通过血缘追踪验证，请在报告中标注数据来源。")
 
     return "\n\n".join(parts)
 

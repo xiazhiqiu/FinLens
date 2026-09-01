@@ -5,6 +5,7 @@ FinScope DataRetriever Agent
 1. 从 extracted_entities 中提取股票代码
 2. 并行调用 query_stock_info + query_financial_indicators
 3. 清洗、整合返回数据，存入 financial_data
+4. [企业级] 记录数据血缘节点
 """
 
 import json
@@ -16,7 +17,25 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from graphs.state import FinancialAnalysisState
 from tools.financial_tools import query_stock_info, query_financial_indicators
 
+# 企业级模块（可选导入）
+try:
+    from audit.data_lineage import DataLineage, DataSourceType, TransformationType
+    ENTERPRISE_MODE = True
+except ImportError:
+    ENTERPRISE_MODE = False
+
 logger = logging.getLogger(__name__)
+
+# 数据血缘全局单例
+_data_lineage = None
+
+
+def _get_data_lineage() -> "DataLineage":
+    """获取数据血缘单例"""
+    global _data_lineage
+    if _data_lineage is None and ENTERPRISE_MODE:
+        _data_lineage = DataLineage()
+    return _data_lineage
 
 
 def _extract_stock_codes(entities: List[Dict[str, Any]]) -> List[str]:
@@ -118,8 +137,41 @@ def data_retriever_node(state: FinancialAnalysisState) -> Dict[str, Any]:
 
     agent_status["data_retriever"] = "done"
 
+    # [企业级] 记录数据血缘节点
+    lineage_node_id = ""
+    lineage = _get_data_lineage()
+    if lineage:
+        # 创建数据源节点
+        source_node = lineage.create_source_node(
+            name=f"Tushare数据: {primary_code}",
+            source_type=DataSourceType.TUSHARE,
+            metadata={"stock_code": primary_code, "data_keys": list(financial_data.keys())},
+        )
+        # 获取上游节点（来自 report_extractor 的 lineage_node_id）
+        upstream_id = state.get("lineage_node_id", "")
+        parent_ids = [source_node.node_id]
+        if upstream_id:
+            parent_ids.append(upstream_id)
+
+        # 创建派生节点
+        derived_node = lineage.create_derived_node(
+            name=f"财务数据整合: {primary_code}",
+            source_type=DataSourceType.MANUAL,
+            parent_ids=parent_ids,
+            metadata={"stock_code": primary_code, "indicator_count": len(financial_data.get("financial_indicators", {}))},
+        )
+        # 记录转换
+        lineage.record_transformation(
+            transform_type=TransformationType.AGGREGATE,
+            description=f"合并研报抽取 + 股票数据: {primary_code}",
+            input_node_ids=parent_ids,
+            output_node_id=derived_node.node_id,
+        )
+        lineage_node_id = derived_node.node_id
+
     return {
         "financial_data": financial_data,
         "agent_status": agent_status,
         "error_log": error_log,
+        "lineage_node_id": lineage_node_id,
     }

@@ -66,6 +66,9 @@ class FinancialAnalysisState(TypedDict):
     # ========== [企业级] 合规 ==========
     compliance_warnings: List[Dict[str, Any]]
 
+    # ========== [企业级] 数据血缘 ==========
+    lineage_node_id: str
+
 
 def create_initial_state(
     user_query: str,
@@ -109,4 +112,5 @@ def create_initial_state(
         pdf_path=pdf_path,
         agent_call_history=[],
         compliance_warnings=[],
+        lineage_node_id="",
     )
