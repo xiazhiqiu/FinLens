@@ -49,6 +49,10 @@ class FinancialAnalysisState(TypedDict):
     analysis_result: str
     final_report: str
 
+    # ========== PDF 深度利用 ==========
+    pdf_sections: List[Dict[str, Any]]  # 压缩后的页面列表（含 key_points + financial_data + tables）
+    pdf_summary: str  # 全文摘要（LLM 压缩生成）
+
     # ========== 检索上下文 ==========
     retrieved_docs: List[Dict[str, Any]]
     tool_call_history: List[Dict[str, Any]]
@@ -102,6 +106,8 @@ def create_initial_state(
         financial_data={},
         analysis_result="",
         final_report="",
+        pdf_sections=[],
+        pdf_summary="",
         retrieved_docs=[],
         tool_call_history=[],
         iteration_count=0,

@@ -302,12 +302,13 @@ def query_financial_indicators(stock_code: str, report_period: str = "latest") -
 def extract_report_key_info(pdf_path: str) -> str:
     """
     从PDF金融研报中抽取关键实体信息，包括公司名称、股票代码、财务指标、评级、目标价等。
+    同时返回结构化页面数据（用于后续 LLM 压缩）。
 
     参数:
         pdf_path: 研报PDF文件的本地路径
 
     返回:
-        JSON格式字符串，包含抽取的结构化实体
+        JSON格式字符串，包含抽取的结构化实体和结构化页面
     """
     logger.info("[Tool] extract_report_key_info: pdf_path=%s", pdf_path)
 
@@ -318,7 +319,7 @@ def extract_report_key_info(pdf_path: str) -> str:
         from extractors.mineru_extractor import extract_pdf_text
         from extractors.entity_extractor import extract_financial_entities
 
-        # 提取文本
+        # 提取文本（含结构化页面）
         text_result = extract_pdf_text(pdf_path.strip())
         if text_result.get("error"):
             return json.dumps(text_result, ensure_ascii=False, indent=2)
@@ -333,6 +334,10 @@ def extract_report_key_info(pdf_path: str) -> str:
         extraction["total_pages"] = text_result.get("total_pages", "N/A")
         extraction["file_path"] = pdf_path
         extraction["text_source"] = text_result.get("source", "unknown")
+
+        # 添加结构化页面数据（用于后续压缩）
+        structured_pages = text_result.get("structured_pages", [])
+        extraction["structured_pages"] = structured_pages
 
         return json.dumps({"error": False, "extraction": extraction}, ensure_ascii=False, indent=2)
 

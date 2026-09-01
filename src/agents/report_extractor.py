@@ -4,8 +4,10 @@ FinScope ReportExtractor Agent
 负责:
 1. 检测 state 中是否有待解析的 PDF 路径
 2. 调用 extract_report_key_info 工具抽取结构化金融实体
-3. 清洗工具返回结果，存入 extracted_entities
-4. [企业级] 记录数据血缘节点
+3. 调用 page_compressor 压缩 PDF 内容
+4. 清洗工具返回结果，存入 extracted_entities
+5. 将压缩结果写入 pdf_sections 和 pdf_summary
+6. [企业级] 记录数据血缘节点
 """
 
 import os
@@ -15,6 +17,7 @@ from typing import Dict, Any, List
 
 from graphs.state import FinancialAnalysisState
 from tools.financial_tools import extract_report_key_info
+from extractors.page_compressor import compress_pages
 
 # 企业级模块（可选导入）
 try:
@@ -110,6 +113,30 @@ def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
     if new_entities:
         logger.info("研报抽取完成: %d 个实体", len(new_entities))
 
+    # PDF 深度利用：压缩结构化页面
+    structured_pages = extraction.get("structured_pages", [])
+    pdf_sections = []
+    pdf_summary = ""
+
+    if structured_pages:
+        logger.info("开始压缩 PDF 页面: %d 页", len(structured_pages))
+        try:
+            compressor_result = compress_pages(structured_pages, use_llm=True)
+            if not compressor_result.get("error"):
+                pdf_sections = compressor_result.get("compressed_pages", [])
+                pdf_summary = compressor_result.get("summary", "")
+                logger.info(
+                    "PDF 压缩完成: LLM=%d, 规则=%d",
+                    compressor_result.get("llm_compressed_count", 0),
+                    compressor_result.get("rule_compressed_count", 0),
+                )
+            else:
+                logger.warning("PDF 压缩失败: %s", compressor_result.get("message", "未知错误"))
+                error_log.append(f"[ReportExtractor] PDF 压缩失败: {compressor_result.get('message', '')}")
+        except Exception as e:
+            logger.warning("PDF 压缩异常: %s", str(e)[:100])
+            error_log.append(f"[ReportExtractor] PDF 压缩异常: {str(e)[:100]}")
+
     agent_status["report_extractor"] = "done"
 
     # [企业级] 记录数据血缘节点
@@ -119,12 +146,18 @@ def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
         node = lineage.create_source_node(
             name=f"PDF研报抽取: {os.path.basename(pdf_path)}",
             source_type=DataSourceType.PDF_EXTRACTION,
-            metadata={"pdf_path": pdf_path, "entity_count": len(new_entities)},
+            metadata={
+                "pdf_path": pdf_path,
+                "entity_count": len(new_entities),
+                "compressed_pages": len(pdf_sections),
+            },
         )
         lineage_node_id = node.node_id
 
     return {
         "extracted_entities": existing_entities + new_entities,
+        "pdf_sections": pdf_sections,
+        "pdf_summary": pdf_summary,
         "agent_status": agent_status,
         "error_log": error_log,
         "lineage_node_id": lineage_node_id,
