@@ -113,6 +113,36 @@ class Settings(BaseSettings):
         """检查 LLM 是否就绪"""
         return self.get_api_key_status()["status"] == "ready"
 
+    def validate_data_source(self) -> Dict[str, any]:
+        """检查数据源配置状态"""
+        has_tushare = bool(self.TUSHARE_TOKEN and self.TUSHARE_TOKEN != "your-tushare-token-here")
+        has_akshare = True  # AkShare 无需 token，只要网络可达
+
+        if has_tushare:
+            return {
+                "configured": True,
+                "primary": "Tushare",
+                "fallback": "AkShare",
+                "status": "ready",
+                "message": "Tushare + AkShare 双源可用",
+            }
+        elif has_akshare:
+            return {
+                "configured": True,
+                "primary": "AkShare",
+                "fallback": None,
+                "status": "degraded",
+                "message": "Tushare 未配置，仅 AkShare 可用（部分功能受限）",
+            }
+        else:
+            return {
+                "configured": False,
+                "primary": None,
+                "fallback": None,
+                "status": "unavailable",
+                "message": "无可用数据源，请配置 TUSHARE_TOKEN",
+            }
+
 
 _settings_instance: Optional[Settings] = None
 _lock = threading.Lock()

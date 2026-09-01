@@ -76,6 +76,24 @@ class FinancialAnalysisGraph:
                 storage_path=audit_storage_path,
             )
 
+        # 启动配置校验
+        self._validate_config()
+
+    def _validate_config(self):
+        """启动时校验必要配置"""
+        from utils.config import settings
+
+        # 校验 LLM
+        if not settings.is_api_ready():
+            logger.warning("LLM API Key 未配置，系统将在降级模式下运行")
+
+        # 校验数据源
+        ds_status = settings.validate_data_source()
+        if ds_status["status"] == "unavailable":
+            logger.warning("数据源未配置: %s", ds_status["message"])
+        elif ds_status["status"] == "degraded":
+            logger.info("数据源降级: %s", ds_status["message"])
+
     def validate_input(self, user_query: str) -> Dict[str, Any]:
         """[企业级] 验证用户输入"""
         if not self._input_guard:

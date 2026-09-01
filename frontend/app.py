@@ -265,6 +265,16 @@ with st.sidebar:
             logout()
         st.divider()
 
+    # [企业级] 数据源状态
+    settings = get_settings()
+    ds_status = settings.validate_data_source()
+    status_colors = {"ready": "🟢", "degraded": "🟡", "unavailable": "🔴"}
+    status_icon = status_colors.get(ds_status["status"], "⚪")
+    st.markdown(f"**数据源**: {status_icon} {ds_status['message']}")
+    if ds_status["status"] == "unavailable":
+        st.warning("未配置 TUSHARE_TOKEN，无法查询股票数据")
+    st.divider()
+
     st.markdown("### 分析配置")
     analysis_type = st.selectbox(
         "分析类型",

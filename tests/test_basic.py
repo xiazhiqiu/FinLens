@@ -60,3 +60,41 @@ def test_entity_extractor():
     assert len(extraction["financial_metrics"]) > 0
     assert "买入" in extraction["ratings"]
     assert "45.00" in extraction["target_prices"]
+
+
+def test_validate_data_source():
+    """测试数据源配置校验"""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+    from utils.config import get_settings
+    settings = get_settings()
+
+    result = settings.validate_data_source()
+    assert "configured" in result
+    assert "status" in result
+    assert "message" in result
+    assert result["status"] in ["ready", "degraded", "unavailable"]
+
+
+def test_financial_tools_no_token():
+    """测试无 Token 时金融工具返回错误"""
+    import sys
+    import os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+    from tools.financial_tools import query_stock_info, query_financial_indicators
+    import json
+
+    # 测试股票信息查询（无 Token 时应返回 error 或成功，不返回模拟数据）
+    result_str = query_stock_info.invoke({"stock_code": "600196"})
+    result = json.loads(result_str)
+
+    # 验证：要么成功（有真实数据），要么失败（有 error），但不能是模拟数据
+    if result.get("error"):
+        assert "message" in result
+        assert "模拟" not in result.get("message", "")
+    else:
+        # 成功时验证数据来源
+        assert result.get("data_source") != "内置模拟数据"

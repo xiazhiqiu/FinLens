@@ -1,12 +1,13 @@
 """
 FinScope 金融工具链
 
-Tushare 优先 + AkShare 降级 + 模拟数据兜底:
+Tushare 优先 + AkShare 降级:
 - query_stock_info: A股股票基本信息查询
 - query_financial_indicators: 上市公司财务指标查询
 - extract_report_key_info: PDF研报金融实体抽取
 
 所有工具遵循"永不抛异常"设计，异常捕获后返回结构化 JSON。
+无数据源时返回 error，不使用模拟数据。
 """
 
 import json
@@ -68,30 +69,6 @@ def safe_request(
 
     logger.error("[%s] 全部尝试失败: %s", func_name, str(last_error)[:150])
     return None
-
-
-# ============================================================
-# 模拟数据（网络不可用时兜底）
-# ============================================================
-
-_MOCK_STOCK_INFO = {
-    "公司名称": "示例公司",
-    "所属行业": "制造业",
-    "上市日期": "2000-01-01",
-    "总股本": "1000000000",
-    "公司简介": "（模拟数据，需网络连通后获取真实数据）",
-}
-
-_MOCK_FINANCIAL_INDICATORS = {
-    "stock_code": "000000",
-    "report_period": "最近报告期",
-    "total_revenue": "模拟数据",
-    "net_profit": "模拟数据",
-    "gross_margin": "模拟数据",
-    "roe": "模拟数据",
-    "eps": "模拟数据",
-    "data_source": "内置模拟数据",
-}
 
 
 # ============================================================
@@ -258,11 +235,14 @@ def query_stock_info(stock_code: str) -> str:
         if info_dict:
             data_source = "AkShare (东方财富)"
 
-    # 兜底模拟数据
+    # 无数据源可用
     if not info_dict:
-        info_dict = dict(_MOCK_STOCK_INFO)
-        info_dict["股票代码"] = stock_code
-        data_source = "内置模拟数据"
+        result = {
+            "error": True,
+            "message": f"未配置数据源或查询失败 (stock_code={stock_code})。请配置 TUSHARE_TOKEN 或检查网络连接。",
+            "stock_code": stock_code,
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     result = {
         "error": False,
@@ -303,11 +283,13 @@ def query_financial_indicators(stock_code: str, report_period: str = "latest") -
         if indicators:
             data_source = "AkShare (东方财富)"
 
-    # 兜底模拟数据
+    # 无数据源可用
     if not indicators:
-        indicators = dict(_MOCK_FINANCIAL_INDICATORS)
-        indicators["stock_code"] = stock_code
-        data_source = "内置模拟数据"
+        result = {
+            "error": True,
+            "message": f"未配置数据源或查询失败 (stock_code={stock_code})。请配置 TUSHARE_TOKEN 或检查网络连接。",
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     if "data_source" not in indicators:
         indicators["data_source"] = data_source
