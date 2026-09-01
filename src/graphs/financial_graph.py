@@ -33,6 +33,7 @@ from agents.supervisor import supervisor_node
 from agents.report_extractor import report_extractor_node
 from agents.data_retriever import data_retriever_node
 from agents.financial_analyst import financial_analyst_node
+from agents.reviewer import reviewer_node
 from agents.report_writer import report_writer_node
 
 # 企业级模块（可选导入）
@@ -148,7 +149,7 @@ class FinancialAnalysisGraph:
     @staticmethod
     def _route_from_supervisor(
         state: FinancialAnalysisState,
-    ) -> Literal["report_extractor", "data_retriever", "financial_analyst", "report_writer", "__end__"]:
+    ) -> Literal["report_extractor", "data_retriever", "financial_analyst", "reviewer", "report_writer", "__end__"]:
         """Supervisor 条件路由"""
         next_agent = state.get("next_agent", "FINISH")
 
@@ -158,7 +159,7 @@ class FinancialAnalysisGraph:
         if state.get("iteration_count", 0) >= MAX_ITERATIONS:
             return "__end__"
 
-        valid_nodes = {"report_extractor", "data_retriever", "financial_analyst", "report_writer"}
+        valid_nodes = {"report_extractor", "data_retriever", "financial_analyst", "reviewer", "report_writer"}
         if next_agent not in valid_nodes:
             return "__end__"
 
@@ -173,6 +174,7 @@ class FinancialAnalysisGraph:
         workflow.add_node("report_extractor", report_extractor_node)
         workflow.add_node("data_retriever", data_retriever_node)
         workflow.add_node("financial_analyst", financial_analyst_node)
+        workflow.add_node("reviewer", reviewer_node)
         workflow.add_node("report_writer", report_writer_node)
 
         # 入口
@@ -186,6 +188,7 @@ class FinancialAnalysisGraph:
                 "report_extractor": "report_extractor",
                 "data_retriever": "data_retriever",
                 "financial_analyst": "financial_analyst",
+                "reviewer": "reviewer",
                 "report_writer": "report_writer",
                 "__end__": END,
             },
@@ -195,6 +198,7 @@ class FinancialAnalysisGraph:
         workflow.add_edge("report_extractor", "supervisor")
         workflow.add_edge("data_retriever", "supervisor")
         workflow.add_edge("financial_analyst", "supervisor")
+        workflow.add_edge("reviewer", "supervisor")
         workflow.add_edge("report_writer", "supervisor")
 
         return workflow

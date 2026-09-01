@@ -368,6 +368,7 @@ def run_analysis(user_query: str):
                     "report_extractor": "report_extraction",
                     "data_retriever": "data_retrieval",
                     "financial_analyst": "financial_analysis",
+                    "reviewer": "review",
                     "report_writer": "report_writing",
                 }
                 step_type = step_type_map.get(node_name, node_name)
@@ -385,6 +386,10 @@ def run_analysis(user_query: str):
                 elif node_name == "financial_analyst":
                     analysis = node_output.get("analysis_result", "")
                     detail_parts.append(f"分析 {len(analysis)} 字符")
+                elif node_name == "reviewer":
+                    verdict = node_output.get("review_result", "?")
+                    issues = node_output.get("issues_found", [])
+                    detail_parts.append(f"判定: {verdict} | 问题: {len(issues)} 个")
                 elif node_name == "report_writer":
                     report = node_output.get("final_report", "")
                     detail_parts.append(f"报告 {len(report)} 字符")

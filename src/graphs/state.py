@@ -69,6 +69,11 @@ class FinancialAnalysisState(TypedDict):
     # ========== [企业级] 数据血缘 ==========
     lineage_node_id: str
 
+    # ========== [企业级] 复核审查 ==========
+    review_result: str  # pass / revise
+    review_feedback: str
+    review_revision_count: int
+
 
 def create_initial_state(
     user_query: str,
@@ -113,4 +118,7 @@ def create_initial_state(
         agent_call_history=[],
         compliance_warnings=[],
         lineage_node_id="",
+        review_result="",
+        review_feedback="",
+        review_revision_count=0,
     )

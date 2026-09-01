@@ -33,6 +33,7 @@ AGENT_PRIORITY_ORDER = [
     "report_extractor",
     "data_retriever",
     "financial_analyst",
+    "reviewer",
     "report_writer",
 ]
 
@@ -140,19 +141,22 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
 | report_extractor | 从PDF研报中抽取关键金融实体 | 有研报需解析且尚未抽取 |
 | data_retriever | 检索A股/宏观金融数据 | 需要股票信息或财务指标 |
 | financial_analyst | 深度金融分析 | 已有足够数据待分析 |
-| report_writer | 撰写结构化分析报告 | 分析已完成待输出报告 |
+| reviewer | 审查分析结果质量（数据一致性/过度断言/维度完整） | 分析完成后、撰写报告前 |
+| report_writer | 撰写结构化分析报告 | 审查通过后输出报告 |
 
 ## 决策原则
-1. 按逻辑顺序: 先抽取 → 再检索 → 再分析 → 最后撰写
+1. 按逻辑顺序: 先抽取 → 再检索 → 再分析 → 审查 → 最后撰写
 2. 如果某一阶段已完成，直接跳到下一阶段
-3. 如果所有阶段已完成，立即 FINISH
+3. 分析完成后必须先审查再撰写（reviewer pass 后才到 report_writer）
+4. 如果审查返回 revise，指派 financial_analyst 修订
+5. 如果所有阶段已完成，立即 FINISH
 
 ## 当前进度
 {context}
 
 ## 输出格式（严格要求）
 仅输出一个 JSON 对象:
-{{"next_agent": "report_extractor|data_retriever|financial_analyst|report_writer|FINISH", "reason": "一句话决策理由"}}
+{{"next_agent": "report_extractor|data_retriever|financial_analyst|reviewer|report_writer|FINISH", "reason": "一句话决策理由"}}
 """
 
     if is_llm_ready():
