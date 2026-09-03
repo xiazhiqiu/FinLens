@@ -50,3 +50,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# 运行时产物（可再生，勿入库）
+data/parse_cache/
+data/audit_logs/
+data/sqlite/audit_logs/
+scripts/tmp/
