@@ -1,0 +1,81 @@
+{
+  "sample": "furui",
+  "coverage": 0.997120968616586,
+  "n_facts": 1486,
+  "key_metric_hits": {
+    "营业收入": true,
+    "归母净利润": true,
+    "净利润": true,
+    "资产总计": true,
+    "负债合计": true,
+    "股东权益合计": true,
+    "基本每股收益": true
+  },
+  "domains": {
+    "overview": {
+      "n_sections": 7,
+      "raw_tokens": 3278,
+      "budget": 24000,
+      "used": 443,
+      "l2_reserve": 0,
+      "n_injected": 4,
+      "n_l2_injected": 0,
+      "n_pointers": 1,
+      "n_total_sections": 5
+    },
+    "operating": {
+      "n_sections": 79,
+      "raw_tokens": 60120,
+      "budget": 24000,
+      "used": 23611,
+      "l2_reserve": 0,
+      "n_injected": 37,
+      "n_l2_injected": 0,
+      "n_pointers": 44,
+      "n_total_sections": 79
+    },
+    "financial": {
+      "n_sections": 586,
+      "raw_tokens": 273967,
+      "budget": 24000,
+      "used": 23616,
+      "l2_reserve": 0,
+      "n_injected": 41,
+      "n_l2_injected": 0,
+      "n_pointers": 548,
+      "n_total_sections": 586
+    },
+    "governance": {
+      "n_sections": 53,
+      "raw_tokens": 38175,
+      "budget": 24000,
+      "used": 23539,
+      "l2_reserve": 0,
+      "n_injected": 40,
+      "n_l2_injected": 0,
+      "n_pointers": 13,
+      "n_total_sections": 53
+    },
+    "events": {
+      "n_sections": 51,
+      "raw_tokens": 36517,
+      "budget": 24000,
+      "used": 23619,
+      "l2_reserve": 0,
+      "n_injected": 34,
+      "n_l2_injected": 0,
+      "n_pointers": 17,
+      "n_total_sections": 50
+    }
+  },
+  "global": {
+    "budget": 24000,
+    "used": 23560,
+    "l2_reserve": 0,
+    "n_injected": 46,
+    "n_l2_injected": 0,
+    "n_pointers": 728,
+    "n_total_sections": 773
+  },
+  "domains_total_used": 94828
+}

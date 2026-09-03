@@ -1,0 +1,49 @@
+{
+  "sample": "joinn",
+  "coverage": 0.0,
+  "n_facts": 452,
+  "key_metric_hits": {
+    "营业收入": true,
+    "归母净利润": false,
+    "净利润": false,
+    "资产总计": true,
+    "负债合计": true,
+    "股东权益合计": true,
+    "基本每股收益": false
+  },
+  "domains": {
+    "overview": {
+      "n_sections": 536,
+      "raw_tokens": 209717,
+      "budget": 24000,
+      "used": 23493,
+      "l2_reserve": 0,
+      "n_injected": 57,
+      "n_l2_injected": 0,
+      "n_pointers": 475,
+      "n_total_sections": 532
+    },
+    "operating": {
+      "n_sections": 0
+    },
+    "financial": {
+      "n_sections": 0
+    },
+    "governance": {
+      "n_sections": 0
+    },
+    "events": {
+      "n_sections": 0
+    }
+  },
+  "global": {
+    "budget": 24000,
+    "used": 23493,
+    "l2_reserve": 0,
+    "n_injected": 57,
+    "n_l2_injected": 0,
+    "n_pointers": 475,
+    "n_total_sections": 532
+  },
+  "domains_total_used": 23493
+}
