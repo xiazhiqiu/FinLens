@@ -47,6 +47,24 @@ class Settings(BaseSettings):
     TUSHARE_TOKEN: str = Field(default="", description="Tushare API token")
     TUSHARE_PRIORITY: bool = Field(default=True, description="Tushare 优先于 AkShare")
 
+    # ---- PDF 解析 ----
+    MINERU_API_URL: str = Field(
+        default="",
+        description="MinerU API 服务地址（如 http://localhost:8000）；留空使用本地 CLI。"
+        "200 页研报全文解析耗时数分钟，生产环境建议部署 mineru-api 服务",
+    )
+    MINERU_TIMEOUT_SECONDS: int = Field(
+        default=900, ge=30, le=7200,
+        description="MinerU 解析超时（秒）；200 页全文解析建议 ≥600",
+    )
+    PARSE_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="PDF 解析结果缓存（按内容 SHA-256 键控，schema 变更自动失效）",
+    )
+    PARSE_CACHE_DIR: str = Field(
+        default="./data/parse_cache", description="解析缓存目录"
+    )
+
     # ---- 数据库与存储 ----
     SQLITE_PATH: str = Field(
         default="./data/sqlite/agent_state.db", description="SQLite 持久化路径"
@@ -57,6 +75,43 @@ class Settings(BaseSettings):
     AGENT_TIMEOUT_SECONDS: int = Field(default=120, ge=10, le=600, description="单次调用超时")
     SINGLE_AGENT_MAX_CALLS: int = Field(
         default=3, ge=1, le=10, description="单Agent连续调用上限"
+    )
+
+    # ---- 多级上下文压缩（P1-P4）----
+    USE_MULTILEVEL_COMPRESSION: bool = Field(
+        default=True,
+        description="L1 无损结构化 + 预算装配链路（P4 起唯一路径；关闭仅用于诊断降级）",
+    )
+    CONTEXT_BUDGET_TOKENS: int = Field(
+        default=24000, ge=1000, le=128000,
+        description="Agent 单次注入上下文预算（装配器硬约束）",
+    )
+    MAX_TOOL_ROUNDS_PER_AGENT: int = Field(
+        default=5, ge=1, le=30,
+        description="单 Agent 工具循环轮数上限（每轮可带多条并行调用；"
+                    "真实调用总数另有 40 次硬熔断兜底，C4 语义修正）",
+    )
+    L2_MIN_TEXT_TOKENS: int = Field(
+        default=600, ge=100, le=20000,
+        description="章节文本超过此 token 量才值得 L2 语义压缩（小的直接原文直注）",
+    )
+
+    # ---- P5 架构演进 ----
+    USE_DOMAIN_AGENTS: bool = Field(
+        default=True,
+        description="E2: 5 领域 agent 替代单 Analyst（关闭或十节覆盖率不足时回退全局装配路径）",
+    )
+    L2_EAGER_MAX_NEW: int = Field(
+        default=30, ge=1, le=100,
+        description="E1: ContextPreparator 单次 L2 急切构建上限（替代 Analyst 惰性 8/次）",
+    )
+    DOMAIN_CHAPTER_COVERAGE_MIN: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="E2: 进入领域模式的最小十节覆盖率（非 T3 text token 占比，非标模板自动回退）",
+    )
+    DOMAIN_MAX_PARALLEL_AGENTS: int = Field(
+        default=3, ge=1, le=5,
+        description="E2: 领域 agent 并行度（ThreadPoolExecutor workers）",
     )
 
     # ---- LLM 调用参数 ----

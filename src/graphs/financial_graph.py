@@ -22,10 +22,15 @@ FinScope 金融分析 StateGraph 编排
 import os
 import logging
 import time
-from typing import Literal, Dict, Any
+from typing import Literal, Dict, Any, List, Tuple
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+
+# SqliteSaver 可选导入：包缺失时降级 InMemorySaver（compile() 内已有对应降级逻辑）
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+except ImportError:
+    SqliteSaver = None
 
 from .state import FinancialAnalysisState, create_initial_state
 
@@ -33,6 +38,7 @@ from agents.supervisor import supervisor_node
 from agents.report_extractor import report_extractor_node
 from agents.data_retriever import data_retriever_node
 from agents.financial_analyst import financial_analyst_node
+from agents.context_preparator import context_preparator_node
 from agents.reviewer import reviewer_node
 from agents.report_writer import report_writer_node
 
@@ -48,7 +54,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 15
+# 熔断上限从全局配置读取（P1-8 修复: 此前硬编码 15，改配置无效）
+from utils.config import get_settings
+
+MAX_ITERATIONS = get_settings().MAX_AGENT_ITERATIONS
 
 
 class FinancialAnalysisGraph:
@@ -164,6 +173,49 @@ class FinancialAnalysisGraph:
             "violations": result.violations,
         }
 
+    def _terminal_gate(self, final_report: str) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        [企业级] 终态合规闸门（修订循环之外，invoke / stream 两条路径都必须执行）
+
+        策略（脱敏放行 + 显式告警）:
+        - RegulationEngine 只判定不阻断，违规记录进 compliance_warnings
+        - ContentFilter 对敏感信息/违规建议做确定性脱敏替换
+        - CRITICAL 违规在报告顶部插入显式告警横幅（不可被 force-pass 静默吞掉）
+        """
+        violations: List[Dict[str, Any]] = []
+
+        # 第一层：监管规则检查（只判定，不阻断）
+        if self._regulation_engine:
+            try:
+                reg = self._regulation_engine.check_compliance(final_report)
+                violations.extend(reg.violations or [])
+            except Exception as e:
+                logger.warning("终态监管检查异常: %s", str(e)[:100])
+
+        # 第二层：确定性脱敏（敏感信息/违规建议替换）
+        filtered = final_report
+        if self._content_filter:
+            try:
+                cf = self._content_filter.filter_content(final_report)
+                filtered = cf.filtered_content or final_report
+                violations.extend(cf.violations or [])
+            except Exception as e:
+                logger.warning("终态脱敏异常: %s", str(e)[:100])
+
+        # CRITICAL 违规横幅（放行但显式告警，绝不静默）
+        critical = [v for v in violations if v.get("severity") == "critical"]
+        if critical:
+            banner = "\n".join(
+                f"> ⚠️ **合规告警 [{v.get('rule_id', '?')}]**: {v.get('message', '')}"
+                for v in critical
+            )
+            filtered = (
+                f"> **⚠️ 本报告含 {len(critical)} 条 CRITICAL 级合规违规，请人工复核后再使用**\n\n"
+                f"{banner}\n\n---\n\n{filtered}"
+            )
+
+        return filtered, violations
+
     @staticmethod
     def _route_from_supervisor(
         state: FinancialAnalysisState,
@@ -192,6 +244,7 @@ class FinancialAnalysisGraph:
         workflow.add_node("report_extractor", report_extractor_node)
         workflow.add_node("data_retriever", data_retriever_node)
         workflow.add_node("financial_analyst", financial_analyst_node)
+        workflow.add_node("context_preparator", context_preparator_node)
         workflow.add_node("reviewer", reviewer_node)
         workflow.add_node("report_writer", report_writer_node)
 
@@ -213,7 +266,10 @@ class FinancialAnalysisGraph:
         )
 
         # 子Agent -> Supervisor
-        workflow.add_edge("report_extractor", "supervisor")
+        # [P5-E1] 确定性边: report_extractor → context_preparator → supervisor
+        # （上下文准备是确定性节点，不经 Supervisor LLM 路由，不消耗其配额）
+        workflow.add_edge("report_extractor", "context_preparator")
+        workflow.add_edge("context_preparator", "supervisor")
         workflow.add_edge("data_retriever", "supervisor")
         workflow.add_edge("financial_analyst", "supervisor")
         workflow.add_edge("reviewer", "supervisor")
@@ -228,16 +284,24 @@ class FinancialAnalysisGraph:
 
         workflow = self._build_graph()
 
-        # 创建 SqliteSaver
-        try:
-            import sqlite3
-            conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
-            saver = SqliteSaver(conn)
-            logger.info("SqliteSaver 初始化成功: %s", self.sqlite_path)
-        except Exception as e:
-            from langgraph.checkpoint.memory import InMemorySaver
-            logger.warning("SqliteSaver 初始化失败 (%s)，回退 InMemorySaver", e)
-            saver = InMemorySaver()
+        # 创建 Checkpointer（SqliteSaver 优先，缺包/初始化失败时降级内存版）
+        # 注: InMemorySaver 仅存在于旧版 langgraph，新版类名为 MemorySaver，此处做版本兼容
+        import langgraph.checkpoint.memory as _cp_memory
+        _MemorySaver = getattr(_cp_memory, "InMemorySaver", None) or getattr(_cp_memory, "MemorySaver", None)
+
+        if SqliteSaver is None or _MemorySaver is None:
+            assert _MemorySaver is not None, "langgraph.checkpoint.memory 中未找到可用的内存 Saver"
+            saver = _MemorySaver()
+            logger.warning("SqliteSaver 不可用，回退内存 Checkpointer（断点续跑不可用）")
+        else:
+            try:
+                import sqlite3
+                conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
+                saver = SqliteSaver(conn)
+                logger.info("SqliteSaver 初始化成功: %s", self.sqlite_path)
+            except Exception as e:
+                logger.warning("SqliteSaver 初始化失败 (%s)，回退内存 Checkpointer", e)
+                saver = _MemorySaver()
 
         self._compiled_graph = workflow.compile(checkpointer=saver)
         logger.info("FinancialAnalysisGraph 编译完成 (checkpointer=%s)", type(saver).__name__)
@@ -278,13 +342,12 @@ class FinancialAnalysisGraph:
 
         result = compiled.invoke(initial_state, {"configurable": {"thread_id": thread_id}})
 
-        # [企业级] 输出过滤
+        # [企业级] 终态闸门（永不跳过：脱敏 + 违规标记 + CRITICAL 告警横幅）
         final_report = result.get("final_report", "")
         if final_report:
-            filter_result = self.filter_output(final_report)
-            if not filter_result["valid"]:
-                result["final_report"] = filter_result["filtered"]
-                result["compliance_warnings"] = filter_result["violations"]
+            gated_report, violations = self._terminal_gate(final_report)
+            result["final_report"] = gated_report
+            result["compliance_warnings"] = violations
 
         # [企业级] 审计日志
         duration_ms = (time.time() - start_time) * 1000
@@ -339,4 +402,11 @@ class FinancialAnalysisGraph:
             {"configurable": {"thread_id": thread_id}},
             stream_mode="updates",
         ):
+            # [企业级] 终态闸门：对 report_writer 产出的报告做脱敏 + 违规标记（修复 UI 主路径绕过）
+            if "report_writer" in chunk:
+                node_output = chunk["report_writer"]
+                if isinstance(node_output, dict) and node_output.get("final_report"):
+                    gated_report, violations = self._terminal_gate(node_output["final_report"])
+                    node_output["final_report"] = gated_report
+                    node_output["compliance_warnings"] = violations
             yield chunk

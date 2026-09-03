@@ -49,9 +49,11 @@ class FinancialAnalysisState(TypedDict):
     analysis_result: str
     final_report: str
 
-    # ========== PDF 深度利用 ==========
-    pdf_sections: List[Dict[str, Any]]  # 压缩后的页面列表（含 key_points + financial_data + tables）
-    pdf_summary: str  # 全文摘要（LLM 压缩生成）
+    # ========== [P1-P4] 多级上下文压缩 ==========
+    pdf_l1: Dict[str, Any]  # L1 结构化无损层 {sections, tables, facts}（确定性产物，落 parse_cache）
+    pdf_l2: Dict[str, Any]  # L2 章节语义压缩 {section_id: {thesis, key_arguments}}（P3 惰性构建）
+    pdf_l3: Dict[str, Any]  # L3 全局摘要（P3）
+    pdf_context: str  # 装配产物（预算驱动），Agent 唯一消费入口（新链路）
 
     # ========== 检索上下文 ==========
     retrieved_docs: List[Dict[str, Any]]
@@ -77,6 +79,20 @@ class FinancialAnalysisState(TypedDict):
     review_result: str  # pass / revise
     review_feedback: str
     review_revision_count: int
+    defect_locus: str  # 缺陷归属: analysis / report / both（revise 时由 Reviewer 判定）
+    prev_analysis_result: str  # revise 时备份的上一版分析（供 Analyst 增量修订）
+    prev_final_report: str  # revise 时备份的上一版报告（供 Writer 增量修订）
+
+    # ========== [企业级] 合规（确定性规则结果，Reviewer 预检产出） ==========
+    compliance_violations: List[Dict[str, Any]]
+
+    # ========== [P5] 上下文准备 + 领域架构 ==========
+    chapter_map: Dict[str, int]             # E1: section_id -> 十节章节号（0 前置/99 尾注）
+    domain_contexts: Dict[str, str]         # E1/E2: 领域 -> 预算装配上下文（覆盖率不足/flag关为空 dict）
+    derived_metrics: List[Dict[str, Any]]   # E3: 确定性算子层产物
+    cross_source_checks: List[Dict[str, Any]]  # E5: facts↔MD&A 散文对账结果
+    domain_analyses: Dict[str, str]         # E2: 领域 -> 领域 agent 产出（修订精准回炉缓存）
+    defect_domain: str                      # E2: Reviewer 判定的缺陷领域（'' 未定位）
 
 
 def create_initial_state(
@@ -106,8 +122,10 @@ def create_initial_state(
         financial_data={},
         analysis_result="",
         final_report="",
-        pdf_sections=[],
-        pdf_summary="",
+        pdf_l1={},
+        pdf_l2={},
+        pdf_l3={},
+        pdf_context="",
         retrieved_docs=[],
         tool_call_history=[],
         iteration_count=0,
@@ -127,4 +145,14 @@ def create_initial_state(
         review_result="",
         review_feedback="",
         review_revision_count=0,
+        defect_locus="",
+        prev_analysis_result="",
+        prev_final_report="",
+        compliance_violations=[],
+        chapter_map={},
+        domain_contexts={},
+        derived_metrics=[],
+        cross_source_checks=[],
+        domain_analyses={},
+        defect_domain="",
     )
