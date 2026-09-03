@@ -1,0 +1,55 @@
+{
+  "report_chars": 8042,
+  "review_result": "revise",
+  "review_revisions": 1,
+  "defect_domain": "financial",
+  "llm_error_log": [
+    "[强制终止] financial_analyst 连续调度达到上限"
+  ],
+  "sections": 776,
+  "facts": 1486,
+  "l2_entries": 30,
+  "domain_contexts": [
+    "events",
+    "financial",
+    "governance",
+    "operating",
+    "overview"
+  ],
+  "domain_analyses": [
+    "events",
+    "financial",
+    "governance",
+    "operating",
+    "overview"
+  ],
+  "derived_metrics_ok": 15,
+  "derived_metrics_skipped": 3,
+  "cross_source_checks": {
+    "营业收入": "mismatch",
+    "归母净利润": "no_prose",
+    "资产总计": "mismatch"
+  },
+  "citations_in_report": 71,
+  "unique_pages_cited": 22,
+  "fact_sample_hit": 10,
+  "fact_sample_total": 10,
+  "tool_calls_by_agent": {
+    "domain_overview": 26,
+    "domain_operating": 20,
+    "domain_governance": 28,
+    "domain_events": 22,
+    "report_writer": 28,
+    "reviewer": 48,
+    "domain_financial": 24
+  },
+  "agent_status": {
+    "supervisor": "done",
+    "report_extractor": "done",
+    "data_retriever": "done",
+    "financial_analyst": "done",
+    "report_writer": "done",
+    "context_preparator": "done",
+    "reviewer": "done"
+  }
+}

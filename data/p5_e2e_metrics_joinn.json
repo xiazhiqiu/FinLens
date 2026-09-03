@@ -1,0 +1,40 @@
+{
+  "report_chars": 7457,
+  "review_result": "pass",
+  "review_revisions": 0,
+  "defect_domain": "",
+  "llm_error_log": [
+    "[DataRetriever] 股票信息查询失败 (000345): 未配置数据源或查询失败 (stock_code=000345)。请配置 TUSHARE_TOKEN 或检查网络连接。",
+    "[DataRetriever] 财务指标查询失败 (000345): 未配置数据源或查询失败 (stock_code=000345)。请配置 TUSHARE_TOKEN 或检查网络连接。",
+    "[Reviewer] 输出不可解析（含一次重试），降级放行并标注未审查"
+  ],
+  "sections": 536,
+  "facts": 452,
+  "l2_entries": 30,
+  "domain_contexts": [],
+  "domain_analyses": [],
+  "derived_metrics_ok": 4,
+  "derived_metrics_skipped": 2,
+  "cross_source_checks": {
+    "营业收入": "no_prose",
+    "资产总计": "no_prose"
+  },
+  "citations_in_report": 66,
+  "unique_pages_cited": 24,
+  "fact_sample_hit": 10,
+  "fact_sample_total": 10,
+  "tool_calls_by_agent": {
+    "financial_analyst": 32,
+    "report_writer": 34,
+    "reviewer": 38
+  },
+  "agent_status": {
+    "supervisor": "done",
+    "report_extractor": "done",
+    "data_retriever": "done",
+    "financial_analyst": "done",
+    "report_writer": "done",
+    "context_preparator": "done",
+    "reviewer": "done"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "report_chars": 8845,
+  "review_result": "revise",
+  "review_revisions": 1,
+  "defect_domain": "",
+  "llm_error_log": [
+    "[强制终止] report_writer 连续调度达到上限"
+  ],
+  "sections": 776,
+  "facts": 1486,
+  "l2_entries": 30,
+  "domain_contexts": [],
+  "domain_analyses": [],
+  "derived_metrics_ok": 15,
+  "derived_metrics_skipped": 3,
+  "cross_source_checks": {
+    "营业收入": "mismatch",
+    "归母净利润": "no_prose",
+    "资产总计": "mismatch"
+  },
+  "citations_in_report": 79,
+  "unique_pages_cited": 19,
+  "fact_sample_hit": 10,
+  "fact_sample_total": 10,
+  "tool_calls_by_agent": {
+    "financial_analyst": 30,
+    "report_writer": 88,
+    "reviewer": 36
+  },
+  "agent_status": {
+    "supervisor": "done",
+    "report_extractor": "done",
+    "data_retriever": "done",
+    "financial_analyst": "done",
+    "report_writer": "done",
+    "context_preparator": "done",
+    "reviewer": "done"
+  }
+}
