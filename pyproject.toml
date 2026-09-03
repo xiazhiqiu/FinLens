@@ -21,8 +21,12 @@ dependencies = [
     "tushare>=1.4.0",
     "akshare>=1.16.0",
     # ---- PDF 解析 (MinerU) ----
-    "pymupdf>=1.25.0",
-    "beautifulsoup4>=4.12.0",
+    # 注: pymupdf / beautifulsoup4 已按产品决策移除（解析质量优先，无 MinerU 时明确报错）
+    #     MinerU 为独立可选依赖（pip install mineru），或部署 mineru-api 服务
+    "requests>=2.31.0",
+    # ---- 上下文压缩（P1 地基）----
+    "lxml>=5.2",
+    "tiktoken>=0.8",
     # ---- LangChain & LangGraph ----
     "langchain>=1.0.5",
     "langchain-core>=1.0.0",

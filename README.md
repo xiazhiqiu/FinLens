@@ -1,12 +1,12 @@
 # FinScope 金融研报智能分析系统
 
-基于 LangGraph 多智能体协同的金融研报智能分析系统，集成 MinerU PDF 深度解析、多模型 LLM、双数据源金融工具链。
+基于 LangGraph 多智能体协同的金融研报智能分析系统，集成 PDF 深度解析（MinerU API 服务优先 / 本地 CLI 降级）、多模型 LLM、双数据源金融工具链。
 
 ## 功能特性
 
 ### 核心能力
 
-- **MinerU 深度 PDF 解析**：精准表格识别 + 科目匹配 + 金融实体抽取
+- **PDF 深度解析**：**MinerU 专用**——API 服务优先（docker-compose 一键部署）/ 本地 CLI 降级；跨页表格合并、复杂版面还原 + **解析结果缓存**（按内容哈希，重复分析零解析成本）；正则+规则引擎抽取金融实体
 - **PDF 深度利用**：LLM 逐页压缩提取关键信息 + 规则兜底，结构化引用 `[P 页码]`
 - **双数据源金融工具**：Tushare 深度数据 + AkShare 实时行情，自动降级
 - **Supervisor 多智能体架构**：5 个专业 Agent 协同，LLM 动态调度
@@ -32,8 +32,8 @@
 ### 环境要求
 
 - Python 3.11+
-- MinerU（可选，用于 PDF 深度解析）
-- Tushare Token（可选，用于金融数据）
+- MinerU（PDF 分析必需）：推荐 docker 部署 mineru-api 服务（`docker compose up -d mineru-api`），或本地 `pip install mineru`
+- Tushare Token（可选，用于金融数据；未配置时自动降级 AkShare）
 - LLM API Key（必需，DeepSeek/OpenAI/Ollama 任选）
 
 ### 安装
@@ -62,6 +62,12 @@ DEEPSEEK_MODEL=deepseek-chat   # 模型名称
 # 金融数据（可选）
 TUSHARE_TOKEN=your_token       # Tushare Pro Token
 TUSHARE_PRIORITY=true          # 优先使用 Tushare
+
+# PDF 解析（可选）
+MINERU_API_URL=                # MinerU API 服务地址（如 http://localhost:8000），留空走本地 CLI
+MINERU_TIMEOUT_SECONDS=900     # 解析超时（秒）；200 页全文解析建议 ≥600
+PARSE_CACHE_ENABLED=true       # 解析结果缓存（按 PDF 内容 SHA-256，重复分析零解析成本）
+PARSE_CACHE_DIR=./data/parse_cache
 
 # 企业级（可选）
 JWT_SECRET=your_secret         # JWT 密钥
@@ -97,7 +103,8 @@ FinScope/
 │   ├── tools/
 │   │   └── financial_tools.py     # Tushare/AkShare 工具链
 │   ├── extractors/
-│   │   ├── mineru_extractor.py    # MinerU PDF 解析
+│   │   ├── mineru_extractor.py    # PDF 解析（MinerU API 服务 / 本地 CLI / PyMuPDF 三级降级）
+│   │   ├── parse_cache.py         # 解析结果缓存（内容 SHA-256 键控 + schema 版本失效）
 │   │   ├── entity_extractor.py    # 正则实体抽取
 │   │   └── page_compressor.py     # LLM 页面压缩 + 规则兜底
 │   └── utils/
@@ -185,7 +192,7 @@ ReportWriter 撰告 + 程序化来源表
 | 组件 | 技术 |
 |------|------|
 | Agent 编排 | LangGraph StateGraph + Supervisor 条件路由 |
-| PDF 解析 | MinerU (PDF-Extract-Kit + VLM) |
+| PDF 解析 | MinerU（API 服务优先 / 本地 CLI 降级）+ 解析结果缓存 |
 | 页面压缩 | LLM 逐页压缩 + 规则正则兜底 |
 | 金融数据 | Tushare Pro + AkShare |
 | 大模型 | DeepSeek / OpenAI / Ollama |

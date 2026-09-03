@@ -1,0 +1,32 @@
+{
+  "report_chars": 8061,
+  "review_result": "revise",
+  "review_revisions": 1,
+  "llm_error_log": [
+    "[强制终止] financial_analyst 连续调度达到上限"
+  ],
+  "pdf_context_chars": 18089,
+  "pdf_context_tokens_est": 27133,
+  "sections": 536,
+  "tables": 111,
+  "facts": 443,
+  "l2_entries": 24,
+  "tool_calls_total": 143,
+  "tool_calls_by_agent": {
+    "financial_analyst": 90,
+    "report_writer": 18,
+    "reviewer": 35
+  },
+  "citations_in_report": 87,
+  "unique_pages_cited": 22,
+  "fact_sample_hit": 10,
+  "fact_sample_total": 10,
+  "agent_status": {
+    "supervisor": "done",
+    "report_extractor": "done",
+    "data_retriever": "done",
+    "financial_analyst": "done",
+    "report_writer": "done",
+    "reviewer": "done"
+  }
+}

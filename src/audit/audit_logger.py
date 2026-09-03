@@ -13,9 +13,14 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 import json
 import hashlib
+import itertools
+import threading
 
 from common.enterprise_base import EnterpriseBase
 from audit.immutable_store import ImmutableStore
+
+# 模块级事件计数器（线程安全）: 修复此前各 AuditLogger 实例各自从 1 计数导致 event_id 跨实例重复
+_event_counter = itertools.count(1)
 
 
 class EventType(Enum):
@@ -124,9 +129,8 @@ class AuditLogger:
         self.store = ImmutableStore(storage_path) if enable_file else None
 
     def _generate_event_id(self) -> str:
-        """生成事件ID"""
-        self.event_counter += 1
-        return f"AE-{datetime.now().strftime('%Y%m%d')}-{self.event_counter:06d}"
+        """生成事件ID（模块级计数，跨实例唯一）"""
+        return f"AE-{datetime.now().strftime('%Y%m%d')}-{next(_event_counter):06d}"
 
     def log_event(
         self,
@@ -336,3 +340,31 @@ class AuditLogger:
             "failed_events": len(failed_events),
             "failure_rate": len(failed_events) / len(recent_events) if recent_events else 0,
         }
+
+
+# ============================================================
+# 模块级默认共享单例
+# 修复: 此前 supervisor / reviewer 各自 new AuditLogger，多实例
+# 重复写同一 store 路径（event_id 已由模块级计数器解决重复）
+# ============================================================
+
+_default_logger: Optional["AuditLogger"] = None
+_default_logger_lock = threading.Lock()
+
+
+def get_audit_logger(
+    enable_console: bool = False,
+    enable_file: bool = True,
+    storage_path: str = None,
+) -> "AuditLogger":
+    """获取全进程默认 AuditLogger 单例（线程安全）"""
+    global _default_logger
+    if _default_logger is None:
+        with _default_logger_lock:
+            if _default_logger is None:
+                _default_logger = AuditLogger(
+                    enable_console=enable_console,
+                    enable_file=enable_file,
+                    storage_path=storage_path,
+                )
+    return _default_logger

@@ -16,6 +16,7 @@ services:
       - ./data/sqlite:/app/data/sqlite
       - ./data/uploaded:/app/data/uploaded
       - ./data/audit_logs:/app/data/audit_logs
+      - ./data/parse_cache:/app/data/parse_cache
       - ./.env:/app/.env:ro
       - ./config:/app/config:ro
     environment:
@@ -23,12 +24,39 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
       - TUSHARE_TOKEN=${TUSHARE_TOKEN}
+      - MINERU_API_URL=${MINERU_API_URL:-http://mineru-api:8000}
     restart: unless-stopped
     networks:
       - finscope-network
     depends_on:
       redis:
         condition: service_healthy
+
+  # MinerU PDF 解析服务（教程口径: pip install mineru && mineru-api --host 0.0.0.0 --port 8000）
+  # 首次启动自动下载模型到 /root/.cache/mineru，建议挂卷缓存
+  # 有 GPU 时解除 deploy.resources 段注释以启用 GPU 推理（CPU 亦可运行 pipeline 后端，仅较慢）
+  mineru-api:
+    image: mineru:latest   # 按 MinerU 官方 Docker 指南构建/拉取；无镜像时可改为在宿主机 pip 安装并运行 mineru-api
+    container_name: finscope-mineru-api
+    command: ["mineru-api", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${MINERU_API_PORT:-8000}:8000"
+    volumes:
+      - mineru-models:/root/.cache/mineru
+      - mineru-output:/app/output
+    environment:
+      - MINERU_DEVICE_MODE=${MINERU_DEVICE_MODE:-cpu}
+      - MINERU_MODEL_SOURCE=${MINERU_MODEL_SOURCE:-modelscope}
+      - MINERU_VIRTUAL_VRAM_SIZE=${MINERU_VIRTUAL_VRAM_SIZE:-8}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - finscope-network
 
   # Redis 缓存（可选）
   redis:
@@ -66,6 +94,8 @@ services:
 
 volumes:
   redis-data:
+  mineru-models:
+  mineru-output:
 
 networks:
   finscope-network:

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any, Set
 from datetime import datetime
 from dataclasses import dataclass
 import hashlib
+import threading
 
 from common.enterprise_base import EnterpriseBase
 
@@ -344,3 +345,26 @@ class DataLineage:
             "total_nodes": len(self.nodes),
             "issues_found": len(issues),
         }
+
+
+# ============================================================
+# 模块级共享单例
+#
+# 修复: 此前 report_extractor / data_retriever / report_writer
+# 各自 new 独立的 DataLineage 实例（纯内存、互不相通），导致
+# report_writer 在自己的空 registry 里 trace_upstream 必然查不到，
+# 报告中的"数据血缘（来源追踪）"段永远不出现。
+# ============================================================
+
+_lineage_instance: Optional["DataLineage"] = None
+_lineage_lock = threading.Lock()
+
+
+def get_lineage() -> "DataLineage":
+    """获取全进程共享的 DataLineage 单例（线程安全）"""
+    global _lineage_instance
+    if _lineage_instance is None:
+        with _lineage_lock:
+            if _lineage_instance is None:
+                _lineage_instance = DataLineage()
+    return _lineage_instance

@@ -5,25 +5,70 @@ JWT 认证模块
 - Token 生成与验证
 - Token 刷新机制
 - API Key 认证（备选）
+
+安全设计（修复硬编码凭据）:
+- JWT 密钥: 仅从环境变量 JWT_SECRET 读取；开发环境未配置时使用随机临时密钥
+  （重启后所有 token 失效）；生产环境（FINSCOPE_ENV=production）未配置则拒绝启动
+- 用户口令: 存放于外部 users 文件（PBKDF2-SHA256 哈希），源码零口令；
+  首次启动自动生成 admin 随机口令并打印到控制台（仅此一次）
+- API Key: 从外部文件 / 环境变量加载，源码零密钥
 """
 
 import os
 import time
+import json
+import secrets
 import hashlib
 import hmac
-import json
 import base64
+import logging
+import threading
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from common.enterprise_base import EnterpriseBase
+logger = logging.getLogger(__name__)
+
+PBKDF2_ITERATIONS = 100_000
+
+
+def hash_password(password: str, salt_hex: str = None) -> str:
+    """PBKDF2-SHA256 口令哈希，返回 pbkdf2_sha256$<iter>$<salt_hex>$<hash_hex>"""
+    salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """校验口令（常数时间比较）"""
+    try:
+        algo, iters, salt_hex, hash_hex = stored.split("$")
+        if algo != "pbkdf2_sha256":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), int(iters))
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    except Exception:
+        return False
 
 
 class TokenManager:
     """Token 管理器"""
 
     def __init__(self, secret_key: str = None, expire_minutes: int = 60):
-        self.secret_key = secret_key or os.getenv("JWT_SECRET", "finscope-enterprise-secret-key-change-in-production")
+        if secret_key:
+            self.secret_key = secret_key
+        elif os.getenv("JWT_SECRET"):
+            self.secret_key = os.getenv("JWT_SECRET")
+        elif os.getenv("FINSCOPE_ENV", "").lower() == "production":
+            raise RuntimeError(
+                "生产环境必须通过环境变量 JWT_SECRET 配置 JWT 密钥，拒绝使用临时密钥启动"
+            )
+        else:
+            # 随机临时密钥: 源码零密钥；代价是重启后所有 token 失效（开发态可接受）
+            self.secret_key = secrets.token_hex(32)
+            logger.warning(
+                "JWT_SECRET 未配置，已生成随机临时密钥（重启后所有 token 失效）。"
+                "生产环境请务必配置 JWT_SECRET 环境变量"
+            )
         self.expire_minutes = expire_minutes
 
     def generate_token(self, user_id: str, role: str, extra_claims: Dict = None) -> str:
@@ -33,7 +78,7 @@ class TokenManager:
             "role": role,
             "iat": int(time.time()),
             "exp": int(time.time()) + (self.expire_minutes * 60),
-            "jti": hashlib.sha256(f"{user_id}{time.time()}".encode()).hexdigest()[:16],
+            "jti": hashlib.sha256(f"{user_id}{time.time()}{secrets.token_hex(8)}".encode()).hexdigest()[:16],
         }
         if extra_claims:
             payload.update(extra_claims)
@@ -116,37 +161,122 @@ class TokenManager:
             return None
 
 
+class UsersStore:
+    """
+    用户口令存储（外部文件，源码零口令）
+
+    文件格式 (data/users.json):
+    {
+        "admin": {"password_hash": "pbkdf2_sha256$100000$...$...", "role": "admin"},
+        "analyst": {"password": "明文（加载时自动升级为哈希并回写）", "role": "analyst"}
+    }
+
+    环境变量:
+    - FINSCOPE_USERS_FILE: 自定义 users 文件路径
+    - FINSCOPE_USERS_JSON: 直接注入 JSON（测试/容器场景优先级最高）
+    """
+
+    def __init__(self, users_file: str = None):
+        self.users_file = users_file or os.getenv("FINSCOPE_USERS_FILE", "data/users.json")
+        self._lock = threading.Lock()
+        self._users: Dict[str, Dict[str, str]] = self._load_or_bootstrap()
+
+    def _load_or_bootstrap(self) -> Dict[str, Dict[str, str]]:
+        env_json = os.getenv("FINSCOPE_USERS_JSON")
+        if env_json:
+            try:
+                return self._normalize(json.loads(env_json))
+            except Exception as e:
+                logger.error("FINSCOPE_USERS_JSON 解析失败: %s", str(e)[:100])
+                return {}
+
+        if os.path.isfile(self.users_file):
+            try:
+                with open(self.users_file, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                users = self._normalize(raw)
+                # 明文口令自动升级为哈希并回写
+                if any("password" in u for u in raw.values()):
+                    self._save(users)
+                    logger.info("检测到明文口令，已自动升级为 PBKDF2 哈希: %s", self.users_file)
+                return users
+            except Exception as e:
+                logger.error("users 文件加载失败 (%s): %s", self.users_file, str(e)[:100])
+                return {}
+
+        # 首次启动: 引导生成 admin + 随机口令
+        return self._bootstrap()
+
+    def _bootstrap(self) -> Dict[str, Dict[str, str]]:
+        bootstrap_password = secrets.token_urlsafe(9)
+        users = {
+            "admin": {"password_hash": hash_password(bootstrap_password), "role": "admin"},
+        }
+        try:
+            self._save(users)
+            # 初始口令仅在首次生成的控制台输出一次，文件中只存哈希
+            logger.warning(
+                "首次启动已生成初始管理员（文件: %s）\n"
+                "  用户名: admin\n  初始口令: %s\n"
+                "  ⚠️ 该口令仅本次显示，请登录后尽快修改并删除本日志",
+                self.users_file, bootstrap_password,
+            )
+        except Exception as e:
+            logger.error("users 文件写入失败 (%s): %s", self.users_file, str(e)[:100])
+        return users
+
+    @staticmethod
+    def _normalize(raw: Dict) -> Dict[str, Dict[str, str]]:
+        users: Dict[str, Dict[str, str]] = {}
+        for username, info in raw.items():
+            if not isinstance(info, dict):
+                continue
+            entry = {"role": info.get("role", "analyst")}
+            if info.get("password_hash"):
+                entry["password_hash"] = info["password_hash"]
+            elif info.get("password"):
+                entry["password_hash"] = hash_password(info["password"])
+            else:
+                continue
+            users[username] = entry
+        return users
+
+    def _save(self, users: Dict[str, Dict[str, str]]):
+        directory = os.path.dirname(self.users_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(self.users_file, "w", encoding="utf-8") as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+
+    def verify(self, username: str, password: str) -> Optional[str]:
+        """校验口令，成功返回角色"""
+        with self._lock:
+            entry = self._users.get(username)
+        if not entry:
+            return None
+        if not verify_password(password, entry.get("password_hash", "")):
+            return None
+        return entry.get("role", "analyst")
+
+
 class JWTAuth:
     """JWT 认证器"""
 
-    def __init__(self, token_manager: TokenManager = None):
+    def __init__(self, token_manager: TokenManager = None, users_store: UsersStore = None):
         self.token_manager = token_manager or TokenManager()
+        self.users_store = users_store or UsersStore()
 
     def authenticate(self, username: str, password: str) -> Optional[str]:
         """
-        用户认证（示例实现，实际应连接 LDAP/AD）
-        """
-        # TODO: 实际应连接企业 LDAP/AD
-        # 示例用户数据库（生产环境应从数据库或配置中心获取）
-        # 密码应使用 bcrypt/argon2 哈希存储
-        users_db = self._get_users_db()
+        用户认证
 
-        user = users_db.get(username)
-        if not user or user["password"] != password:
+        口令校验基于外部 users 文件（PBKDF2 哈希），生产环境应对接 LDAP/AD。
+        """
+        role = self.users_store.verify(username, password)
+        if role is None:
             return None
 
-        return self.token_manager.generate_token(username, user["role"])
-
-    def _get_users_db(self) -> Dict:
-        """获取用户数据库（示例）"""
-        # 生产环境应从数据库或配置中心获取
-        # 密码应使用 bcrypt/argon2 哈希
-        return {
-            "analyst": {"password": "analyst123", "role": "analyst"},
-            "reviewer": {"password": "reviewer123", "role": "reviewer"},
-            "compliance": {"password": "compliance123", "role": "compliance"},
-            "admin": {"password": "admin123", "role": "admin"},
-        }
+        return self.token_manager.generate_token(username, role)
 
     def verify(self, token: str) -> Optional[Dict]:
         """验证 Token"""
@@ -168,15 +298,48 @@ class JWTAuth:
 
 
 class APIKeyAuth:
-    """API Key 认证（备选方案）"""
+    """
+    API Key 认证（备选方案）
 
-    def __init__(self):
-        # 示例 API Keys，实际应从数据库或配置中心获取
-        self.api_keys = {
-            "finscope-demo-key-001": {"user": "system", "role": "admin"},
-            "finscope-demo-key-002": {"user": "analyst01", "role": "analyst"},
-        }
+    密钥从外部加载，源码零密钥:
+    - FINSCOPE_API_KEYS_JSON: 直接注入 JSON（优先）
+    - FINSCOPE_API_KEYS_FILE: 文件路径（默认 data/api_keys.json）
+      格式: {"<key>": {"user": "...", "role": "..."}}
+    """
+
+    def __init__(self, keys_file: str = None):
+        self.api_keys: Dict[str, Dict[str, str]] = {}
+        self._load(
+            keys_file or os.getenv("FINSCOPE_API_KEYS_FILE", "data/api_keys.json")
+        )
+
+    def _load(self, path: str):
+        env_json = os.getenv("FINSCOPE_API_KEYS_JSON")
+        if env_json:
+            try:
+                self.api_keys = json.loads(env_json)
+                return
+            except Exception as e:
+                logger.error("FINSCOPE_API_KEYS_JSON 解析失败: %s", str(e)[:100])
+                return
+
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    self.api_keys = json.load(f)
+                logger.info("API Key 文件已加载: %s (%d 个)", path, len(self.api_keys))
+            except Exception as e:
+                logger.error("API Key 文件加载失败 (%s): %s", path, str(e)[:100])
+        else:
+            logger.warning(
+                "未配置 API Key 文件 (%s)，API Key 认证不可用。"
+                "创建该文件（格式 {\"key\": {\"user\":..., \"role\":...}}）后重启生效",
+                path,
+            )
 
     def verify_api_key(self, api_key: str) -> Optional[Dict]:
-        """验证 API Key"""
-        return self.api_keys.get(api_key)
+        """验证 API Key（常数时间比较）"""
+        for key, info in self.api_keys.items():
+            if hmac.compare_digest(key, api_key or ""):
+                return info
+        return None

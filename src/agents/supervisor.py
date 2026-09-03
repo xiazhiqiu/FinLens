@@ -16,12 +16,13 @@ from typing import Dict, Any
 
 from graphs.state import FinancialAnalysisState
 from utils.llm_client import safe_invoke, is_llm_ready
+from utils.config import get_settings
 
 # 企业级模块（可选导入）
 try:
     from security.auth import JWTAuth
     from security.input_guard import InputGuard
-    from audit.audit_logger import AuditLogger, EventType, EventSeverity
+    from audit.audit_logger import AuditLogger, EventType, EventSeverity, get_audit_logger
     ENTERPRISE_MODE = True
 except ImportError:
     ENTERPRISE_MODE = False
@@ -37,20 +38,16 @@ AGENT_PRIORITY_ORDER = [
     "report_writer",
 ]
 
-MAX_ITERATIONS = 15
-MAX_CONSECUTIVE_CALLS = 3
+MAX_ITERATIONS = get_settings().MAX_AGENT_ITERATIONS
+MAX_CONSECUTIVE_CALLS = get_settings().SINGLE_AGENT_MAX_CALLS
 
 # 企业级组件（全局单例）
-_audit_logger = None
 _input_guard = None
 
 
 def _get_audit_logger():
-    """获取审计日志记录器"""
-    global _audit_logger
-    if _audit_logger is None and ENTERPRISE_MODE:
-        _audit_logger = AuditLogger(enable_console=False, enable_file=True)
-    return _audit_logger
+    """获取全进程共享的审计日志单例"""
+    return get_audit_logger() if ENTERPRISE_MODE else None
 
 
 def _get_input_guard():
@@ -128,6 +125,8 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
         f"分析结果: {'已完成' if state.get('analysis_result') else '未完成'}",
         f"报告: {'已完成' if state.get('final_report') else '未完成'}",
         f"审查结果: {state.get('review_result', '无')}",
+        f"缺陷归属: {state.get('defect_locus') or '无'}",
+        f"合规违规数: {len(state.get('compliance_violations', []))}",
     ])
 
     # LLM 决策
@@ -150,8 +149,11 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
 2. 如果某一阶段已完成，直接跳到下一阶段
 3. 报告完成后必须审查（reviewer）
 4. 审查返回 pass → FINISH
-5. 审查返回 revise → 回到 financial_analyst 修订，然后重新撰写
-6. 如果所有阶段已完成，立即 FINISH
+5. 审查返回 revise 时，按缺陷归属（defect_locus）精准路由返工:
+   - defect_locus = "report" → 直接回 report_writer 修订（分析结论没问题，不要重跑分析）
+   - defect_locus = "analysis" 或 "both" → 回 financial_analyst 修订，完成后再回 report_writer 重写
+6. 返工完成后必须重新审查（reviewer）
+7. 如果所有阶段已完成，立即 FINISH
 
 ## 当前进度
 {context}
@@ -192,11 +194,29 @@ def supervisor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
             logger.warning("Supervisor JSON 解析失败: %s", e)
     else:
         # 规则回退
-        for agent_name in AGENT_PRIORITY_ORDER:
-            if agent_status.get(agent_name) != "done":
-                next_agent = agent_name
-                reason = f"LLM不可用，规则回退 → {agent_name}"
-                break
+        # [修订路由] LLM 不可用时，revise 仍按缺陷归属返工（不受 agent_status=done 影响）
+        if state.get("review_result") == "revise":
+            locus = state.get("defect_locus", "both")
+            history = state.get("agent_call_history", [])
+            try:
+                last_review_idx = len(history) - 1 - history[::-1].index("reviewer")
+            except ValueError:
+                last_review_idx = -1
+            rerun_since_review = history[last_review_idx + 1:]
+
+            if "report_writer" in rerun_since_review:
+                next_agent = "reviewer"  # 修订已完成，重新审查
+            elif locus in ("analysis", "both") and "financial_analyst" not in rerun_since_review:
+                next_agent = "financial_analyst"
+            else:
+                next_agent = "report_writer"
+            reason = f"规则回退: revise(locus={locus}) → {next_agent}"
+        else:
+            for agent_name in AGENT_PRIORITY_ORDER:
+                if agent_status.get(agent_name) != "done":
+                    next_agent = agent_name
+                    reason = f"LLM不可用，规则回退 → {agent_name}"
+                    break
 
     # 验证合法性
     valid_targets = AGENT_PRIORITY_ORDER + ["FINISH", "supervisor"]

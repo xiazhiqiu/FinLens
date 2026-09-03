@@ -143,26 +143,75 @@ def _tushare_query_financial(stock_code: str) -> Optional[Dict]:
 # AkShare 数据获取（降级方案）
 # ============================================================
 
+def _em_market_symbol(stock_code: str) -> str:
+    """将裸 6 位 A 股代码转为东财系接口要求的交易所前缀格式
+
+    stock_profit_sheet_by_report_em 等 EM 报表接口要求 SH600196/SZ000001 格式，
+    传裸代码（600196）会内部解析失败（实测 'NoneType' object is not subscriptable）。
+    规则: 6 开头→SH（沪），0/3 开头→SZ（深），4/8/9 开头→BJ（北交所）。
+    """
+    code = str(stock_code).strip().upper()
+    if not code.isdigit() or len(code) != 6:
+        return code  # 已带前缀或非标准格式，原样返回
+    if code.startswith("6"):
+        return f"SH{code}"
+    if code.startswith(("0", "3")):
+        return f"SZ{code}"
+    if code.startswith(("4", "8", "9")):
+        return f"BJ{code}"
+    return code
+
+
 def _akshare_query_stock_info(stock_code: str) -> Optional[Dict]:
-    """使用 AkShare 查询股票基本信息"""
+    """使用 AkShare 查询股票基本信息（双接口降级: 东财个股信息 → 巨潮公司概况）"""
     try:
         import akshare as ak
 
+        # 路径1: 东方财富个股信息（item/value 竖表）
         df = safe_request(
             func=lambda: ak.stock_individual_info_em(symbol=stock_code),
             func_name="stock_individual_info_em",
+            max_retries=2,
         )
+        if df is not None and not (hasattr(df, "empty") and df.empty):
+            info = {}
+            for _, row in df.iterrows():
+                key = str(row.get("item", ""))
+                value = str(row.get("value", ""))
+                if key and value and value.lower() not in ("none", "nan", ""):
+                    info[key] = value
+            if info:
+                info["_endpoint"] = "eastmoney"
+                return info
+        logger.info("[AkShare] stock_individual_info_em 无数据/不可达，降级巨潮 stock_profile_cninfo")
 
-        if df is None or (hasattr(df, "empty") and df.empty):
-            return None
+        # 路径2: 巨潮资讯公司概况（EM 反爬断连时的备用，实测可用）
+        df2 = safe_request(
+            func=lambda: ak.stock_profile_cninfo(symbol=str(stock_code).strip().zfill(6)),
+            func_name="stock_profile_cninfo",
+            max_retries=1,
+        )
+        if df2 is not None and not (hasattr(df2, "empty") and df2.empty):
+            row = df2.iloc[0].to_dict()
+            info = {}
+            col_map = {
+                "公司名称": "公司全称",
+                "A股简称": "公司简称",
+                "所属行业": "所属行业",
+                "上市日期": "上市日期",
+                "成立日期": "成立日期",
+                "注册资金": "注册资本",
+                "官方网站": "官方网站",
+            }
+            for src, dst in col_map.items():
+                value = str(row.get(src, "")).strip()
+                if value and value.lower() not in ("none", "nan", ""):
+                    info[dst] = value
+            if info:
+                info["_endpoint"] = "cninfo"
+                return info
 
-        info = {}
-        for _, row in df.iterrows():
-            key = str(row.get("item", ""))
-            value = str(row.get("value", ""))
-            if key and value and value.lower() not in ("none", "nan", ""):
-                info[key] = value
-        return info if info else None
+        return None
 
     except Exception as e:
         logger.warning("[AkShare] 查询股票信息失败: %s", str(e)[:100])
@@ -170,30 +219,63 @@ def _akshare_query_stock_info(stock_code: str) -> Optional[Dict]:
 
 
 def _akshare_query_financial(stock_code: str) -> Optional[Dict]:
-    """使用 AkShare 查询财务指标"""
+    """使用 AkShare 查询财务指标（EM 报表接口需交易所前缀格式，见 _em_market_symbol）"""
     try:
         import akshare as ak
 
+        em_symbol = _em_market_symbol(stock_code)
         df = safe_request(
-            func=lambda: ak.stock_profit_sheet_by_report_em(symbol=stock_code),
+            func=lambda: ak.stock_profit_sheet_by_report_em(symbol=em_symbol),
             func_name="stock_profit_sheet_by_report_em",
         )
 
         if df is None or (hasattr(df, "empty") and df.empty):
             return None
 
-        latest = df.head(1).to_dict("records")[0]
+        # EM 报表接口列为英文代码（REPORT_DATE/TOTAL_OPERATE_INCOME/...），按实际列名映射
+        latest = df.iloc[0].to_dict()
+
+        def _num(key: str) -> Optional[float]:
+            try:
+                v = latest.get(key)
+                return float(v) if v is not None and str(v).lower() != "nan" else None
+            except (TypeError, ValueError):
+                return None
+
+        def _fmt_yi(v: Optional[float]) -> str:
+            return f"{v / 1e8:.2f}亿元" if v is not None else "N/A"
+
+        def _fmt_pct(v: Optional[float]) -> str:
+            return f"{v:.2f}%" if v is not None else "N/A"
+
+        revenue = _num("TOTAL_OPERATE_INCOME")
+        parent_profit = _num("PARENT_NETPROFIT")
+        operate_cost = _num("OPERATE_COST")
+
+        gross_margin = (
+            (revenue - operate_cost) / revenue * 100
+            if revenue and revenue > 0 and operate_cost is not None
+            else None
+        )
+        net_margin = (
+            parent_profit / revenue * 100
+            if revenue and revenue > 0 and parent_profit is not None
+            else None
+        )
+
+        report_date = str(latest.get("REPORT_DATE", "") or "")[:10] or "N/A"
+
         return {
             "stock_code": stock_code,
-            "report_period": str(latest.get("报告期", "N/A")),
-            "total_revenue": str(latest.get("营业总收入", "N/A")),
-            "net_profit": str(latest.get("归母净利润", "N/A")),
-            "gross_margin": str(latest.get("毛利率", "N/A")),
-            "net_margin": str(latest.get("净利率", "N/A")),
-            "roe": str(latest.get("净资产收益率", "N/A")),
-            "eps": str(latest.get("基本每股收益", "N/A")),
-            "revenue_yoy_growth": str(latest.get("营业总收入同比增长率", "N/A")),
-            "net_profit_yoy_growth": str(latest.get("归母净利润同比增长率", "N/A")),
+            "report_period": report_date,
+            "total_revenue": _fmt_yi(revenue),
+            "net_profit": _fmt_yi(parent_profit),
+            "gross_margin": _fmt_pct(gross_margin),
+            "net_margin": _fmt_pct(net_margin),
+            "roe": "N/A",  # 利润表不含 ROE，需资产负债表口径，留待后续扩展
+            "eps": str(latest.get("BASIC_EPS", "N/A")),
+            "revenue_yoy_growth": _fmt_pct(_num("TOTAL_OPERATE_INCOME_YOY")),
+            "net_profit_yoy_growth": _fmt_pct(_num("PARENT_NETPROFIT_YOY")),
             "data_source": "AkShare (东方财富)",
         }
 
@@ -233,7 +315,9 @@ def query_stock_info(stock_code: str) -> str:
     if not info_dict:
         info_dict = _akshare_query_stock_info(stock_code)
         if info_dict:
-            data_source = "AkShare (东方财富)"
+            # [血缘诚实性] 按实际命中接口标注来源（东财个股信息 / 巨潮公司概况）
+            endpoint = info_dict.pop("_endpoint", "eastmoney")
+            data_source = "AkShare (巨潮资讯)" if endpoint == "cninfo" else "AkShare (东方财富)"
 
     # 无数据源可用
     if not info_dict:
@@ -319,27 +403,82 @@ def extract_report_key_info(pdf_path: str) -> str:
         from extractors.mineru_extractor import extract_pdf_text
         from extractors.entity_extractor import extract_financial_entities
 
-        # 提取文本（含结构化页面）
-        text_result = extract_pdf_text(pdf_path.strip())
-        if text_result.get("error"):
-            return json.dumps(text_result, ensure_ascii=False, indent=2)
+        pdf_path = pdf_path.strip()
 
-        # 抽取实体
-        entity_result = extract_financial_entities(text_result["full_text"])
-        if entity_result.get("error"):
-            return json.dumps(entity_result, ensure_ascii=False, indent=2)
+        def _parse_and_extract() -> dict:
+            """解析 + 实体抽取 + L1 构建（miss 时的完整链路）"""
+            # 提取文本（含结构化页面）
+            text_result = extract_pdf_text(pdf_path)
+            if text_result.get("error"):
+                return text_result
 
-        # 补充元信息
-        extraction = entity_result["extraction"]
-        extraction["total_pages"] = text_result.get("total_pages", "N/A")
-        extraction["file_path"] = pdf_path
-        extraction["text_source"] = text_result.get("source", "unknown")
+            # 抽取实体
+            entity_result = extract_financial_entities(text_result["full_text"])
+            if entity_result.get("error"):
+                return entity_result
 
-        # 添加结构化页面数据（用于后续压缩）
-        structured_pages = text_result.get("structured_pages", [])
-        extraction["structured_pages"] = structured_pages
+            # 补充元信息
+            extraction = entity_result["extraction"]
+            extraction["total_pages"] = text_result.get("total_pages", "N/A")
+            extraction["file_path"] = pdf_path
+            extraction["text_source"] = text_result.get("source", "unknown")
 
-        return json.dumps({"error": False, "extraction": extraction}, ensure_ascii=False, indent=2)
+            # 添加结构化页面数据（用于后续压缩）
+            extraction["structured_pages"] = text_result.get("structured_pages", [])
+
+            # [P1] L1 结构化无损层（确定性、零 LLM）: 与解析结果一同落缓存，
+            # 命中缓存时零重建。L1 构建失败不阻断主链路（never-throw）。
+            try:
+                from extractors.l1_builder import build_l1
+                extraction["l1"] = build_l1(
+                    extraction["structured_pages"],
+                    companies=extraction.get("companies", []),
+                )
+            except Exception as e:
+                logger.warning("[Tool] L1 构建失败（不阻断解析链路）: %s", str(e)[:150])
+                extraction["l1"] = None
+
+            return {"error": False, "extraction": extraction}
+
+        # ---- 解析缓存（内容 SHA-256 键控；任何缓存故障不阻断主链路）----
+        cache = None
+        pdf_hash = None
+        try:
+            from extractors.parse_cache import compute_pdf_hash, get_parse_cache
+            cache = get_parse_cache()
+            if cache:
+                pdf_hash = compute_pdf_hash(pdf_path)
+        except Exception as e:
+            logger.warning("[Tool] 缓存初始化失败，走无缓存路径: %s", e)
+            cache = None
+
+        if cache and pdf_hash:
+            with cache.inflight(pdf_hash):
+                cached = cache.get(pdf_hash)
+                if cached is not None:
+                    extraction = cached.get("extraction", {})
+                    extraction["file_path"] = pdf_path  # 同内容不同路径的请求，刷新为当前路径
+                    extraction["cache_hit"] = True
+                    extraction["cached_at"] = cached.get("_cached_at", "")
+                    extraction["parse_source"] = cached.get("_cache_parser", "unknown")
+                    logger.info(
+                        "[Tool] 解析缓存命中: %s (解析于 %s, 来源 %s)",
+                        pdf_hash[:12], extraction["cached_at"], extraction["parse_source"],
+                    )
+                    return json.dumps({"error": False, "extraction": extraction}, ensure_ascii=False, indent=2)
+
+                result = _parse_and_extract()
+                if not result.get("error"):
+                    parser = result["extraction"].get("text_source", "unknown")
+                    result["extraction"]["cache_hit"] = False
+                    cache.put(pdf_hash, result, parser=parser)
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+        # 无缓存可用: 原路径直查
+        result = _parse_and_extract()
+        if not result.get("error"):
+            result["extraction"]["cache_hit"] = False
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     except ImportError as e:
         return json.dumps({"error": True, "message": f"缺少依赖: {str(e)[:100]}"}, ensure_ascii=False)

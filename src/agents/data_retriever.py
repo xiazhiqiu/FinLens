@@ -19,23 +19,17 @@ from tools.financial_tools import query_stock_info, query_financial_indicators
 
 # 企业级模块（可选导入）
 try:
-    from audit.data_lineage import DataLineage, DataSourceType, TransformationType
+    from audit.data_lineage import DataLineage, DataSourceType, TransformationType, get_lineage
     ENTERPRISE_MODE = True
 except ImportError:
     ENTERPRISE_MODE = False
 
 logger = logging.getLogger(__name__)
 
-# 数据血缘全局单例
-_data_lineage = None
-
 
 def _get_data_lineage() -> "DataLineage":
-    """获取数据血缘单例"""
-    global _data_lineage
-    if _data_lineage is None and ENTERPRISE_MODE:
-        _data_lineage = DataLineage()
-    return _data_lineage
+    """获取全进程共享的数据血缘单例（跨 Agent 可见，修复此前各自 new 导致的溯源失效）"""
+    return get_lineage() if ENTERPRISE_MODE else None
 
 
 def _extract_stock_codes(entities: List[Dict[str, Any]]) -> List[str]:
@@ -114,7 +108,7 @@ def data_retriever_node(state: FinancialAnalysisState) -> Dict[str, Any]:
         financial_data["stock_info"] = {
             "code": primary_code,
             "name": info.get("公司名称", "未知"),
-            "industry": info.get("行业", "未知"),
+            "industry": info.get("所属行业") or info.get("行业", "未知"),  # Tushare 返回"所属行业"，AkShare 返回"行业"
             "listing_date": info.get("上市日期", "未知"),
             "total_shares": info.get("总股本", "N/A"),
             "source": stock_info_result.get("data_source", "未知"),
@@ -141,11 +135,23 @@ def data_retriever_node(state: FinancialAnalysisState) -> Dict[str, Any]:
     lineage_node_id = ""
     lineage = _get_data_lineage()
     if lineage:
+        # 按实际命中的数据源记录血缘（修复此前降级到 AkShare 仍写死 Tushare 的问题）
+        actual_source = (
+            financial_data.get("financial_indicators", {}).get("data_source", "")
+            or financial_data.get("stock_info", {}).get("source", "")
+        )
+        if "Tushare" in actual_source:
+            lineage_source_type = DataSourceType.TUSHARE
+        elif "AkShare" in actual_source:
+            lineage_source_type = DataSourceType.AKSHARE
+        else:
+            lineage_source_type = DataSourceType.API
+
         # 创建数据源节点
         source_node = lineage.create_source_node(
-            name=f"Tushare数据: {primary_code}",
-            source_type=DataSourceType.TUSHARE,
-            metadata={"stock_code": primary_code, "data_keys": list(financial_data.keys())},
+            name=f"{actual_source or '金融数据'}: {primary_code}",
+            source_type=lineage_source_type,
+            metadata={"stock_code": primary_code, "data_keys": list(financial_data.keys()), "source": actual_source},
         )
         # 获取上游节点（来自 report_extractor 的 lineage_node_id）
         upstream_id = state.get("lineage_node_id", "")

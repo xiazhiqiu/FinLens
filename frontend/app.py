@@ -17,6 +17,7 @@ FinScope Streamlit 前端应用
 import sys
 import os
 import re
+import hashlib
 import time
 import uuid
 from datetime import datetime
@@ -157,6 +158,12 @@ def login_page():
                     payload = auth.verify(token)
                     if payload:
                         st.session_state.user_role = payload.get("role")
+                        # [P1-5 修复] 登录即分配 RBAC 角色（此前 user_roles 恒空，权限检查永远失败）
+                        try:
+                            from security.rbac import Role as _Role
+                            st.session_state.rbac.assign_role(username, _Role(st.session_state.user_role))
+                        except Exception as _e:
+                            st.session_state.user_role = None
 
                     # 审计日志
                     if st.session_state.audit_logger:
@@ -290,20 +297,37 @@ with st.sidebar:
     if uploaded_file:
         upload_dir = "./data/uploaded"
         os.makedirs(upload_dir, exist_ok=True)
-        safe_name = re.sub(r'[^\w\-_.]', '_', uploaded_file.name)
-        pdf_path = os.path.join(upload_dir, safe_name)
-        with open(pdf_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"已上传: {safe_name}")
+        # [bug 修复] 按内容 SHA-256 命名存储：此前按原文件名清洗存储，
+        # 两个用户传同名 PDF 会互相覆盖（后写覆盖先写，分析的可能是别人的文件内容）
+        file_bytes = uploaded_file.getbuffer()
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+        pdf_path = os.path.join(upload_dir, f"{file_hash}.pdf")
+        if not os.path.exists(pdf_path):
+            with open(pdf_path, "wb") as f:
+                f.write(file_bytes)
+        st.session_state.uploaded_filename = uploaded_file.name
+        st.success(f"已上传: {uploaded_file.name}")
 
     st.divider()
     st.markdown("### 操作")
 
+    # [P1-5 修复] RBAC 真正生效: 无"分析写入"权限的角色禁用开始分析
+    can_analyze = check_permission("write:analysis")
+
     col1, col2 = st.columns(2)
     with col1:
-        run_btn = st.button("开始分析", type="primary", disabled=st.session_state.is_running, use_container_width=True)
+        run_btn = st.button(
+            "开始分析", type="primary",
+            disabled=st.session_state.is_running or not can_analyze,
+            use_container_width=True,
+        )
     with col2:
         reset_btn = st.button("重置", disabled=st.session_state.is_running, use_container_width=True)
+
+    if not can_analyze:
+        st.warning("当前角色无分析权限（需要 write:analysis），仅可查看")
+    elif not is_llm_ready():
+        st.warning("LLM API Key 未配置，将运行在降级模式")
 
     if reset_btn:
         st.session_state.thread_id = str(uuid.uuid4())

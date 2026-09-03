@@ -4,10 +4,9 @@ FinScope ReportExtractor Agent
 负责:
 1. 检测 state 中是否有待解析的 PDF 路径
 2. 调用 extract_report_key_info 工具抽取结构化金融实体
-3. 调用 page_compressor 压缩 PDF 内容
-4. 清洗工具返回结果，存入 extracted_entities
-5. 将压缩结果写入 pdf_sections 和 pdf_summary
-6. [企业级] 记录数据血缘节点
+3. 清洗工具返回结果，存入 extracted_entities
+4. [P1-P4] 透传 pdf_l1（L1 结构化无损层；上下文压缩由装配器按预算驱动）
+5. [企业级] 记录数据血缘节点
 """
 
 import os
@@ -17,27 +16,20 @@ from typing import Dict, Any, List
 
 from graphs.state import FinancialAnalysisState
 from tools.financial_tools import extract_report_key_info
-from extractors.page_compressor import compress_pages
 
 # 企业级模块（可选导入）
 try:
-    from audit.data_lineage import DataLineage, DataSourceType
+    from audit.data_lineage import DataLineage, DataSourceType, get_lineage
     ENTERPRISE_MODE = True
 except ImportError:
     ENTERPRISE_MODE = False
 
 logger = logging.getLogger(__name__)
 
-# 数据血缘全局单例
-_data_lineage = None
-
 
 def _get_data_lineage() -> "DataLineage":
-    """获取数据血缘单例"""
-    global _data_lineage
-    if _data_lineage is None and ENTERPRISE_MODE:
-        _data_lineage = DataLineage()
-    return _data_lineage
+    """获取全进程共享的数据血缘单例（跨 Agent 可见，修复此前各自 new 导致的溯源失效）"""
+    return get_lineage() if ENTERPRISE_MODE else None
 
 
 def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
@@ -113,29 +105,7 @@ def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
     if new_entities:
         logger.info("研报抽取完成: %d 个实体", len(new_entities))
 
-    # PDF 深度利用：压缩结构化页面
     structured_pages = extraction.get("structured_pages", [])
-    pdf_sections = []
-    pdf_summary = ""
-
-    if structured_pages:
-        logger.info("开始压缩 PDF 页面: %d 页", len(structured_pages))
-        try:
-            compressor_result = compress_pages(structured_pages, use_llm=True)
-            if not compressor_result.get("error"):
-                pdf_sections = compressor_result.get("compressed_pages", [])
-                pdf_summary = compressor_result.get("summary", "")
-                logger.info(
-                    "PDF 压缩完成: LLM=%d, 规则=%d",
-                    compressor_result.get("llm_compressed_count", 0),
-                    compressor_result.get("rule_compressed_count", 0),
-                )
-            else:
-                logger.warning("PDF 压缩失败: %s", compressor_result.get("message", "未知错误"))
-                error_log.append(f"[ReportExtractor] PDF 压缩失败: {compressor_result.get('message', '')}")
-        except Exception as e:
-            logger.warning("PDF 压缩异常: %s", str(e)[:100])
-            error_log.append(f"[ReportExtractor] PDF 压缩异常: {str(e)[:100]}")
 
     agent_status["report_extractor"] = "done"
 
@@ -143,21 +113,31 @@ def report_extractor_node(state: FinancialAnalysisState) -> Dict[str, Any]:
     lineage_node_id = ""
     lineage = _get_data_lineage()
     if lineage:
+        cache_hit = bool(extraction.get("cache_hit", False))
+        if cache_hit:
+            logger.info(
+                "[ReportExtractor] 解析结果来自缓存 (解析于 %s, 来源 %s)",
+                extraction.get("cached_at", "?"), extraction.get("parse_source", "?"),
+            )
         node = lineage.create_source_node(
             name=f"PDF研报抽取: {os.path.basename(pdf_path)}",
             source_type=DataSourceType.PDF_EXTRACTION,
             metadata={
                 "pdf_path": pdf_path,
                 "entity_count": len(new_entities),
-                "compressed_pages": len(pdf_sections),
+                "structured_pages": len(structured_pages),
+                # [血缘诚实性] 缓存命中必须如实记录，不得伪装成本次解析
+                "cache_hit": cache_hit,
+                "cached_at": extraction.get("cached_at", ""),
+                "parse_source": extraction.get("parse_source", extraction.get("text_source", "unknown")),
             },
         )
         lineage_node_id = node.node_id
 
     return {
         "extracted_entities": existing_entities + new_entities,
-        "pdf_sections": pdf_sections,
-        "pdf_summary": pdf_summary,
+        # [P1-P4] L1 结构化层透传（确定性产物；Analyst/Writer/Reviewer 新链路消费）
+        "pdf_l1": extraction.get("l1") or {},
         "agent_status": agent_status,
         "error_log": error_log,
         "lineage_node_id": lineage_node_id,

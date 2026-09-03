@@ -56,7 +56,15 @@ def extract_financial_entities(full_text: str) -> Dict[str, Any]:
                 companies_set.add("".join(m))
             else:
                 companies_set.add(m)
-    extracted["companies"] = list(companies_set)[:15]
+    # A股年报标准头「股票简称：XXX」= 报告主体，排首位（防正则碎片如「公司及其」被取为首公司）
+    primary = None
+    m = re.search(r"股票简称[：:]\s*([一-龥A-Za-z0-9*]{2,12})", full_text[:5000])
+    if m:
+        primary = m.group(1).strip()
+    companies = ([primary] if primary else []) + sorted(
+        c for c in companies_set if c != primary
+    )
+    extracted["companies"] = companies[:15]
 
     # 2. 股票代码匹配
     stock_codes = re.findall(r"\b([36]0\d{4}|000\d{3}|002\d{3})\b", full_text)

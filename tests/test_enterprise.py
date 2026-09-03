@@ -27,14 +27,20 @@ def test_security_auth():
     assert payload["sub"] == "analyst"
     assert payload["role"] == "analyst"
 
-    # 测试 JWT 认证
+    # 测试 JWT 认证（用户经 FINSCOPE_USERS_JSON 注入，源码零口令）
+    os.environ["FINSCOPE_USERS_JSON"] = '{"analyst": {"password": "test-pass-123", "role": "analyst"}}'
     auth = JWTAuth()
-    token = auth.authenticate("analyst", "analyst123")
+    token = auth.authenticate("analyst", "test-pass-123")
     assert token is not None
+
+    # 错误口令必须被拒绝
+    assert auth.authenticate("analyst", "wrong-password") is None
 
     user = auth.get_current_user(token)
     assert user is not None
     assert user["user_id"] == "analyst"
+
+    del os.environ["FINSCOPE_USERS_JSON"]
 
     print("[PASS] security auth module test passed")
 
